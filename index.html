@@ -1304,15 +1304,6 @@ function detectPISurfaceType(recipe) {
   return (preset && PI_SHIFT_LIBRARY[preset]) ? preset : null;
 }
 
-// ─── State ───────────────────────────────────────────────────────────────────
-let baseRecipe = null;
-let results = [];
-let directions = { 1: 'max', 2: 'max', 3: 'max' };
-let currentFiltered = [];
-let sortState = { col: null, dir: 'desc' };
-let rankMode = 'ideal';   // 'ideal' | 'outlier'
-let colorMode = 'rank';   // 'rank'  | 'terms'
-
 function setRankMode(mode, btn) {
   rankMode = mode;
   btn.closest('.mode-toggle-group').querySelectorAll('.mode-toggle-btn')
@@ -1737,6 +1728,87 @@ function getVoxelToUm() {
 }
 
 
+
+// resolveRawPreset — expands surface presets into explicit term arrays.
+// Defined here (main thread) to guarantee availability regardless of solver.js load status.
+// An identical copy lives in solver.js for worker-context use.
+function resolveRawPreset(preset) {
+  const mk = (factors, coef) => ({ on: true, coef, factors });
+  const f  = (trig, fx=1, fy=1, fz=1) => ({ trig, fx, fy, fz });
+  switch (preset) {
+    case 'fks':
+      return [
+        mk([f('cos(x)',2,1,1), f('sin(y)'), f('cos(z)')], 1),
+        mk([f('cos(y)',1,2,1), f('sin(z)'), f('cos(x)')], 1),
+        mk([f('cos(z)',1,1,2), f('sin(x)'), f('cos(y)')], 1),
+      ];
+    case 'lidinoid':
+      return [
+        mk([f('sin(x)',2,1,1), f('cos(y)'), f('sin(z)')],  1.1),
+        mk([f('sin(y)',1,2,1), f('cos(z)'), f('sin(x)')],  1.1),
+        mk([f('sin(z)',1,1,2), f('cos(x)'), f('sin(y)')],  1.1),
+        mk([f('cos(x)',2,1,1), f('cos(y)',1,2,1)],         -0.2),
+        mk([f('cos(y)',1,2,1), f('cos(z)',1,1,2)],         -0.2),
+        mk([f('cos(z)',1,1,2), f('cos(x)',2,1,1)],         -0.2),
+        mk([f('cos(x)',2,1,1)],                            -0.4),
+        mk([f('cos(y)',1,2,1)],                            -0.4),
+        mk([f('cos(z)',1,1,2)],                            -0.4),
+      ];
+    case 'splitP':
+      return [
+        mk([f('sin(x)'), f('sin(y)'), f('cos(z)')], 1),
+        mk([f('sin(y)'), f('sin(z)'), f('cos(x)')], 1),
+        mk([f('sin(z)'), f('sin(x)'), f('cos(y)')], 1),
+      ];
+    case 'frd':
+      return [
+        mk([f('sin(x)',2,1,1), f('cos(y)'), f('sin(z)')],  1),
+        mk([f('sin(y)',1,2,1), f('cos(z)'), f('sin(x)')],  1),
+        mk([f('sin(z)',1,1,2), f('cos(x)'), f('sin(y)')],  1),
+        mk([f('cos(x)',2,1,1), f('cos(y)',1,2,1)],         -1),
+        mk([f('cos(y)',1,2,1), f('cos(z)',1,1,2)],         -1),
+        mk([f('cos(z)',1,1,2), f('cos(x)',2,1,1)],         -1),
+      ];
+    case 'gyroidHarmonic':
+      return [
+        mk([f('sin(x)'), f('cos(y)')],                     1),
+        mk([f('sin(y)'), f('cos(z)')],                     1),
+        mk([f('sin(z)'), f('cos(x)')],                     1),
+        mk([f('sin(x)',2,1,1), f('cos(y)',1,2,1)],         0.3),
+        mk([f('sin(y)',1,2,1), f('cos(z)',1,1,2)],         0.3),
+        mk([f('sin(z)',1,1,2), f('cos(x)',2,1,1)],         0.3),
+      ];
+    case 'primitiveC':
+      return [
+        mk([f('cos(x)')],                                  2),
+        mk([f('cos(y)')],                                  2),
+        mk([f('cos(z)')],                                  2),
+        mk([f('cos(x)',2,1,1)],                           -1),
+        mk([f('cos(y)',1,2,1)],                           -1),
+        mk([f('cos(z)',1,1,2)],                           -1),
+      ];
+    case 'octo':
+      return [
+        mk([f('cos(x)')],                                  1),
+        mk([f('cos(y)')],                                  1),
+        mk([f('cos(z)')],                                  1),
+        mk([f('cos(x)',2,1,1), f('cos(y)',1,2,1)],        -0.5),
+        mk([f('cos(y)',1,2,1), f('cos(z)',1,1,2)],        -0.5),
+        mk([f('cos(z)',1,1,2), f('cos(x)',2,1,1)],        -0.5),
+      ];
+    case 'pHarmonic':
+      return [
+        mk([f('cos(x)')],                                  1),
+        mk([f('cos(y)')],                                  1),
+        mk([f('cos(z)')],                                  1),
+        mk([f('cos(x)',2,1,1)],                            0.25),
+        mk([f('cos(y)',1,2,1)],                            0.25),
+        mk([f('cos(z)',1,1,2)],                            0.25),
+      ];
+    default:
+      return null;
+  }
+}
 
 function loadFile(file) {
   if (!file) return;
