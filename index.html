@@ -1,0 +1,3488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TPMS Pipeline</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Azeret+Mono:ital,wght@0,300;0,400;0,500;0,600;1,300&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #080c10;
+  --surface:  #0d1318;
+  --panel:    #111a22;
+  --border:   #1c2d3a;
+  --border2:  #243545;
+  --accent:   #00e5c0;
+  --accent2:  #0099ff;
+  --accent3:  #ff6f3c;
+  --warn:     #ffc94a;
+  --text:     #d4e8f0;
+  --muted:    #4a6a7a;
+  --muted2:   #2a4050;
+  --success:  #00c97a;
+  --rank1:    #00e5c0;
+  --rank2:    #0099ff;
+  --rank3:    #9b6fff;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Outfit', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* noise overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 999;
+  opacity: 0.4;
+}
+
+/* grid bg */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(0,229,192,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,192,0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+}
+
+/* Layout */
+.app {
+  display: grid;
+  grid-template-rows: 56px 1fr;
+  grid-template-columns: 300px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Topbar */
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: relative;
+  z-index: 10;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-mark {
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--accent);
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.logo-mark::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  background: conic-gradient(from 0deg, var(--accent), var(--accent2), var(--accent), var(--accent2), var(--accent));
+  border-radius: 2px;
+  animation: spin 8s linear infinite;
+  opacity: 0.7;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.logo-text {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+}
+
+.logo-sub {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+  animation: pulse 2s ease infinite;
+}
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.status-label {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Sidebar */
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+.section-label {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 20px 8px;
+  margin-top: 20px;
+}
+
+.section-label:first-child { margin-top: 0; }
+
+/* Recipe card — unified drop + loaded state */
+.recipe-card {
+  margin: 0 16px 12px;
+  border: 1.5px dashed var(--border2);
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s, background 0.2s;
+  flex-shrink: 0;
+  min-height: 56px;
+}
+
+.recipe-card:hover { border-color: var(--accent); background: rgba(0,229,192,0.03); }
+.recipe-card.loaded { border-style: solid; border-color: rgba(0,229,192,0.25); background: rgba(0,229,192,0.04); }
+
+/* Form controls */
+.control-group {
+  padding: 0 16px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.control-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.control-label span {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.range-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+input[type=number] {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'Azeret Mono', monospace;
+  font-size: 12px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+input[type=number]:focus { border-color: var(--accent); }
+
+input[type=range] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+select {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'Azeret Mono', monospace;
+  font-size: 11px;
+  padding: 7px 10px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234a6a7a'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+select:focus { border-color: var(--accent); }
+
+/* Filter ranks */
+.rank-block {
+  margin: 0 16px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.rank-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.rank-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rank-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rank-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.rank-row select { font-size: 10.5px; }
+
+.direction-toggle {
+  display: flex;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.direction-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-family: 'Azeret Mono', monospace;
+  font-size: 9.5px;
+  padding: 6px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.direction-toggle button.active {
+  background: var(--panel);
+  color: var(--accent);
+}
+
+.threshold-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.threshold-row input[type=number] { font-size: 11px; padding: 5px 8px; }
+
+/* Run button */
+.run-btn {
+  margin: 4px 16px 16px;
+  width: calc(100% - 32px);
+  padding: 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border: none;
+  border-radius: 8px;
+  color: #080c10;
+  font-family: 'Outfit', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.run-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+.run-btn:active { transform: translateY(0); }
+.run-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* Main content */
+.main {
+  overflow: hidden;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+}
+
+.main::-webkit-scrollbar { width: 4px; }
+.main::-webkit-scrollbar-track { background: transparent; }
+.main::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* Stats bar */
+.stats-bar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+  animation: fadeUp 0.4s ease both;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+}
+
+.stat-card.c1::before   { background: var(--accent); }
+.stat-card.c2::before   { background: var(--accent2); }
+.stat-card.c3::before   { background: var(--accent3); }
+.stat-card.c4::before   { background: var(--warn); }
+.stat-card.c-r1::before { background: var(--rank1); }
+.stat-card.c-r2::before { background: var(--rank2); }
+.stat-card.c-r3::before { background: var(--rank3); }
+
+.stat-val {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.stat-label {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.stat-sublabel {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  color: var(--muted2);
+  margin-top: 2px;
+}
+
+/* Log + Plot + Preview row */
+.log-preview-row {
+  display: grid;
+  grid-template-columns: 1fr 280px 280px;
+  gap: 12px;
+}
+
+/* Log panel */
+.log-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  animation: fadeUp 0.4s 0.1s ease both;
+  min-width: 0;
+}
+
+/* Preview panel */
+.preview-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  animation: fadeUp 0.4s 0.15s ease both;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-body {
+  position: relative;
+  flex: 1;
+  min-height: 200px;
+  background: #06080f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#previewCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+#previewCanvas.visible { opacity: 1; }
+
+.preview-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.3s;
+  text-align: center;
+}
+
+.preview-empty.hidden { opacity: 0; pointer-events: none; }
+
+.preview-info {
+  position: absolute;
+  bottom: 8px;
+  left: 0; right: 0;
+  text-align: center;
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.preview-info.visible { opacity: 1; }
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-title {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.panel-badge {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+}
+
+.log-body {
+  padding: 14px 16px;
+  font-family: 'Azeret Mono', monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  min-height: 120px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.log-body::-webkit-scrollbar { width: 3px; }
+.log-body::-webkit-scrollbar-thumb { background: var(--border2); }
+
+.log-line { display: flex; gap: 12px; }
+.log-time { color: var(--muted2); flex-shrink: 0; }
+.log-line.info .log-msg { color: var(--text); }
+.log-line.success .log-msg { color: var(--success); }
+.log-line.warn .log-msg { color: var(--warn); }
+.log-line.accent .log-msg { color: var(--accent); }
+
+/* Results table */
+.results-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  animation: fadeUp 0.4s 0.2s ease both;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  table-layout: auto;
+}
+
+th {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text);
+  padding: 9px 10px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s;
+  background: rgba(0,229,192,0.03);
+}
+
+th:hover { color: var(--accent); }
+
+th .sort-indicator {
+  display: inline-block;
+  margin-left: 5px;
+  opacity: 0.3;
+  font-size: 10px;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+th.sort-asc .sort-indicator,
+th.sort-desc .sort-indicator {
+  opacity: 1;
+  color: var(--accent);
+}
+
+thead tr {
+  border-bottom: 2px solid var(--accent) !important;
+}
+
+tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: rgba(0,229,192,0.03); }
+tbody tr.selected-row { background: rgba(0,229,192,0.07) !important; outline: 1px solid rgba(0,229,192,0.25); outline-offset: -1px; }
+tbody tr.hovered-row { background: rgba(0,229,192,0.04) !important; }
+
+td {
+  padding: 7px 10px;
+  font-family: 'Azeret Mono', monospace;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+td.muted { color: var(--muted); }
+
+/* Directional stiffness group dividers */
+td.td-group-start, th.td-group-start {
+  border-left: 1.5px solid var(--border2);
+}
+td.td-group-end, th.td-group-end {
+  border-right: 1.5px solid var(--border2);
+}
+
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid;
+}
+
+.rank-badge.r1 { color: var(--rank1); border-color: var(--rank1); background: rgba(0,229,192,0.08); }
+.rank-badge.r2 { color: var(--rank2); border-color: var(--rank2); background: rgba(0,153,255,0.08); }
+.rank-badge.r3 { color: var(--rank3); border-color: var(--rank3); background: rgba(155,111,255,0.08); }
+
+/* Mode toggle buttons */
+.mode-toggle-group {
+  display: flex;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mode-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-family: 'Azeret Mono', monospace;
+  font-size: 9.5px;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+
+.mode-toggle-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.mode-toggle-btn.active { background: var(--panel); color: var(--accent); }
+.empty-state {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.empty-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  opacity: 0.3;
+}
+
+.empty-title {
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.empty-sub {
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+/* Progress bar */
+.progress-wrap {
+  margin: 0 16px 12px;
+  display: none;
+  flex-shrink: 0;
+}
+
+.progress-wrap.visible { display: block; }
+
+.progress-label {
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.progress-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+/* Term toggles */
+.terms-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0 16px;
+  margin-bottom: 12px;
+}
+
+.term-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: 'Azeret Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.term-toggle:hover { border-color: var(--border2); color: var(--text); }
+
+.term-toggle input { display: none; }
+
+.term-toggle.checked {
+  border-color: rgba(0,229,192,0.3);
+  background: rgba(0,229,192,0.06);
+  color: var(--accent);
+}
+
+.term-check {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border2);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  transition: all 0.15s;
+}
+
+.term-toggle.checked .term-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.term-check::after {
+  content: '✓';
+  font-size: 8px;
+  color: #080c10;
+  display: none;
+}
+
+.term-toggle.checked .term-check::after { display: block; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Scrollbar global */
+* { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-mark"></div>
+      <div>
+        <div class="logo-text">TPMS PIPELINE</div>
+        <div class="logo-sub">surface explorer · v0.1</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-dot"></div>
+      <div class="status-label">engine running</div>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+
+    <div class="section-label">Domain &amp; Material</div>
+
+    <div class="control-group" style="margin-bottom:8px">
+      <div class="control-label">Application domain</div>
+      <select id="domainSel" onchange="onDomainChange()">
+        <option value="general">General / Agnostic</option>
+        <option value="biomedical">Biomedical</option>
+        <option value="aerospace">Aerospace</option>
+        <option value="oilgas">Oil &amp; Gas</option>
+        <option value="automotive">Automotive</option>
+        <option value="thermal">Thermal / Heat Transfer</option>
+      </select>
+    </div>
+
+    <div class="control-group" id="materialGroup" style="display:none;margin-bottom:8px">
+      <div class="control-label">Base material <span id="materialProps" style="font-family:'Azeret Mono',monospace;font-size:9px;color:var(--muted)"></span></div>
+      <select id="materialSel" onchange="onMaterialChange()"></select>
+    </div>
+
+    <div class="control-group" id="sigmaRefGroup" style="display:none;margin-bottom:8px">
+      <div class="control-label" style="margin-bottom:5px">Reference values <span style="font-family:'Azeret Mono',monospace;font-size:9px;color:var(--muted)">for strain / pore metrics</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <span style="font-family:'Azeret Mono',monospace;font-size:9px;color:var(--muted)">Stress (MPa)</span>
+          <input type="number" id="sigmaRef" value="2" min="0.01" max="10000" step="0.5" style="padding:3px 5px;font-size:11px;text-align:center">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <span style="font-family:'Azeret Mono',monospace;font-size:9px;color:var(--muted)">Cell size (mm)</span>
+          <input type="number" id="cellSize" value="2.0" min="0.1" max="100" step="0.1" style="padding:3px 5px;font-size:11px;text-align:center">
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Base Recipe</div>
+
+    <div class="recipe-card" id="recipeCard">
+      <input type="file" accept=".json" id="fileInput" style="position:absolute;inset:0;opacity:0;cursor:pointer;z-index:2">
+      <div id="recipeEmpty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px 0">
+        <div style="font-size:16px;opacity:0.3">⬡</div>
+        <div style="font-family:'Azeret Mono',monospace;font-size:11px;color:var(--muted);text-align:center">
+          <span style="color:var(--accent)">Drop JSON</span> or click
+        </div>
+      </div>
+      <div id="recipeLoaded" style="display:none;padding:7px 12px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+          <div style="color:var(--accent);font-size:12px">⬡</div>
+          <div id="fileName" style="font-family:'Azeret Mono',monospace;font-size:11px;color:var(--accent);
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">—</div>
+          <div style="font-family:'Azeret Mono',monospace;font-size:9px;color:var(--muted);
+            border:1px solid var(--border2);border-radius:10px;padding:1px 6px;
+            white-space:nowrap;flex-shrink:0;cursor:pointer;z-index:3;position:relative"
+            onclick="document.getElementById('fileInput').click()">change</div>
+        </div>
+        <div id="fileMeta" style="font-family:'Azeret Mono',monospace;font-size:10px;color:var(--muted);padding-left:20px">—</div>
+        <div id="nominalLabel" style="font-family:'Azeret Mono',monospace;font-size:10px;color:var(--muted2);padding-left:20px;margin-top:1px">nominal: —</div>
+      </div>
+    </div>
+
+    <div class="section-label">Sweep Parameters</div>
+
+    <div class="control-group">
+      <div class="control-label">
+        Periodicity variation
+        <span style="font-family:'Azeret Mono',monospace;font-size:10px;color:var(--muted)" id="nominalLabel">nominal: —</span>
+      </div>
+      <div style="font-family:'Azeret Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:6px">% of nominal &nbsp;·&nbsp; <span style="color:var(--muted2)">min → max</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px">
+        <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+          <span style="font-size:10px;color:#22d3ee;font-family:'Azeret Mono',monospace">X</span>
+          <input type="number" id="scaleXlo" value="50"  step="5" min="1" max="500" style="padding:3px 4px;font-size:10px;text-align:center;width:100%">
+          <input type="number" id="scaleXhi" value="200" step="5" min="1" max="500" style="padding:3px 4px;font-size:10px;text-align:center;width:100%">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+          <span style="font-size:10px;color:#e879f9;font-family:'Azeret Mono',monospace">Y</span>
+          <input type="number" id="scaleYlo" value="50"  step="5" min="1" max="500" style="padding:3px 4px;font-size:10px;text-align:center;width:100%">
+          <input type="number" id="scaleYhi" value="200" step="5" min="1" max="500" style="padding:3px 4px;font-size:10px;text-align:center;width:100%">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+          <span style="font-size:10px;color:#facc15;font-family:'Azeret Mono',monospace">Z</span>
+          <input type="number" id="scaleZlo" value="50"  step="5" min="1" max="500" style="padding:3px 4px;font-size:10px;text-align:center;width:100%">
+          <input type="number" id="scaleZhi" value="200" step="5" min="1" max="500" style="padding:3px 4px;font-size:10px;text-align:center;width:100%">
+        </div>
+      </div>
+      <div style="font-family:'Azeret Mono',monospace;font-size:10px;color:var(--muted2);line-height:1.6" id="scaleRangePreview">—</div>
+    </div>
+
+    <div class="control-group" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">Samples</span>
+        <input type="range" id="samplesSlider" min="10" max="1000" value="200" step="10" style="flex:1">
+        <span id="samplesVal" style="font-family:'Azeret Mono',monospace;font-size:11px;color:var(--accent);min-width:28px;text-align:right">200</span>
+      </div>
+    </div>
+
+    <div class="section-label">Filtration Ranks</div>
+
+    <!-- Rank 1 -->
+    <div class="rank-block">
+      <div class="rank-header">
+        <div class="rank-pip" style="background:var(--rank1);box-shadow:0 0 6px var(--rank1)"></div>
+        <span style="color:var(--rank1)">Rank 1</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:auto">primary filter</span>
+      </div>
+      <div class="rank-body">
+        <div class="rank-row">
+          <select id="r1metric">
+            <option value="anisotropy">Anisotropy ratio</option>
+            <option value="Ex_GPa">Stiffness — Ex</option>
+            <option value="Ey_GPa">Stiffness — Ey</option>
+            <option value="Ez_GPa">Stiffness — Ez</option>
+            <option value="stiffness_density">Stiffness / Density</option>
+            <option value="aniso_efficiency">Anisotropy efficiency</option>
+            <option value="axial_dominance">Axial dominance</option>
+            <option value="ortho_contrast">Orthotropic contrast</option>
+            <option value="load_path_eff">Load path efficiency (λ)</option>
+            <option value="connect_idx">Connectivity index (κ)</option>
+            <option value="keff_x">Thermal cond. — kx</option>
+            <option value="keff_y">Thermal cond. — ky</option>
+            <option value="keff_z">Thermal cond. — kz</option>
+            <option value="thermal_anisotropy">Thermal anisotropy (kα)</option>
+            <option value="k_density">Thermal / Density (k/ρ)</option>
+            <option value="microstrain_avg">Avg microstrain (με̄)</option>
+            <option value="pore_size">Mean pore size (φ)</option>
+            <option value="throat_size">Min throat diameter (φt)</option>
+            <option value="perc_idx">Void percolation (perc)</option>
+            <option value="U_strain">Strain energy density (U)</option>
+            <option value="microstrain_x">Microstrain X (με)</option>
+            <option value="microstrain_y">Microstrain Y (με)</option>
+            <option value="microstrain_z">Microstrain Z (με)</option>
+            <option value="microstrain_avg">Avg microstrain (με̄)</option>
+            <option value="pore_size">Mean pore size (φ)</option>
+            <option value="throat_size">Min throat diameter (φt)</option>
+            <option value="perc_idx">Void percolation (perc)</option>
+            <option value="volume_fraction">Volume fraction</option>
+          </select>
+          <div class="direction-toggle">
+            <button class="active" data-rank="1" data-dir="max" onclick="setDir(1,'max',this)">MAX</button>
+            <button data-rank="1" data-dir="min" onclick="setDir(1,'min',this)">MIN</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rank 2 -->
+    <div class="rank-block">
+      <div class="rank-header">
+        <div class="rank-pip" style="background:var(--rank2);box-shadow:0 0 6px var(--rank2)"></div>
+        <span style="color:var(--rank2)">Rank 2</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:auto">secondary filter</span>
+      </div>
+      <div class="rank-body">
+        <div class="rank-row">
+          <select id="r2metric">
+            <option value="none">— disabled —</option>
+            <option value="anisotropy">Anisotropy ratio</option>
+            <option value="Ex_GPa">Stiffness — Ex</option>
+            <option value="Ey_GPa">Stiffness — Ey</option>
+            <option value="Ez_GPa">Stiffness — Ez</option>
+            <option value="stiffness_density">Stiffness / Density</option>
+            <option value="aniso_efficiency">Anisotropy efficiency</option>
+            <option value="axial_dominance">Axial dominance</option>
+            <option value="ortho_contrast">Orthotropic contrast</option>
+            <option value="load_path_eff">Load path efficiency (λ)</option>
+            <option value="connect_idx">Connectivity index (κ)</option>
+            <option value="keff_x">Thermal cond. — kx</option>
+            <option value="keff_y">Thermal cond. — ky</option>
+            <option value="keff_z">Thermal cond. — kz</option>
+            <option value="thermal_anisotropy">Thermal anisotropy (kα)</option>
+            <option value="k_density">Thermal / Density (k/ρ)</option>
+            <option value="microstrain_avg">Avg microstrain (με̄)</option>
+            <option value="pore_size">Mean pore size (φ)</option>
+            <option value="throat_size">Min throat diameter (φt)</option>
+            <option value="perc_idx">Void percolation (perc)</option>
+            <option value="U_strain">Strain energy density (U)</option>
+            <option value="microstrain_x">Microstrain X (με)</option>
+            <option value="microstrain_y">Microstrain Y (με)</option>
+            <option value="microstrain_z">Microstrain Z (με)</option>
+            <option value="microstrain_avg">Avg microstrain (με̄)</option>
+            <option value="pore_size">Mean pore size (φ)</option>
+            <option value="throat_size">Min throat diameter (φt)</option>
+            <option value="perc_idx">Void percolation (perc)</option>
+            <option value="volume_fraction">Volume fraction</option>
+          </select>
+          <div class="direction-toggle">
+            <button class="active" data-rank="2" data-dir="max" onclick="setDir(2,'max',this)">MAX</button>
+            <button data-rank="2" data-dir="min" onclick="setDir(2,'min',this)">MIN</button>
+          </div>
+        </div>
+        <div class="threshold-row">
+          <span>Keep top %</span>
+          <input type="number" id="r2keep" placeholder="default 50%" step="1" min="1" max="100">
+        </div>
+      </div>
+    </div>
+
+    <!-- Rank 3 -->
+    <div class="rank-block">
+      <div class="rank-header">
+        <div class="rank-pip" style="background:var(--rank3);box-shadow:0 0 6px var(--rank3)"></div>
+        <span style="color:var(--rank3)">Rank 3</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:auto">final refinement</span>
+      </div>
+      <div class="rank-body">
+        <div class="rank-row">
+          <select id="r3metric">
+            <option value="none">— disabled —</option>
+            <option value="anisotropy">Anisotropy ratio</option>
+            <option value="Ex_GPa">Stiffness — Ex</option>
+            <option value="Ey_GPa">Stiffness — Ey</option>
+            <option value="Ez_GPa">Stiffness — Ez</option>
+            <option value="stiffness_density">Stiffness / Density</option>
+            <option value="aniso_efficiency">Anisotropy efficiency</option>
+            <option value="axial_dominance">Axial dominance</option>
+            <option value="ortho_contrast">Orthotropic contrast</option>
+            <option value="load_path_eff">Load path efficiency (λ)</option>
+            <option value="connect_idx">Connectivity index (κ)</option>
+            <option value="keff_x">Thermal cond. — kx</option>
+            <option value="keff_y">Thermal cond. — ky</option>
+            <option value="keff_z">Thermal cond. — kz</option>
+            <option value="thermal_anisotropy">Thermal anisotropy (kα)</option>
+            <option value="k_density">Thermal / Density (k/ρ)</option>
+            <option value="microstrain_avg">Avg microstrain (με̄)</option>
+            <option value="pore_size">Mean pore size (φ)</option>
+            <option value="throat_size">Min throat diameter (φt)</option>
+            <option value="perc_idx">Void percolation (perc)</option>
+            <option value="U_strain">Strain energy density (U)</option>
+            <option value="microstrain_x">Microstrain X (με)</option>
+            <option value="microstrain_y">Microstrain Y (με)</option>
+            <option value="microstrain_z">Microstrain Z (με)</option>
+            <option value="microstrain_avg">Avg microstrain (με̄)</option>
+            <option value="pore_size">Mean pore size (φ)</option>
+            <option value="throat_size">Min throat diameter (φt)</option>
+            <option value="perc_idx">Void percolation (perc)</option>
+            <option value="volume_fraction">Volume fraction</option>
+          </select>
+          <div class="direction-toggle">
+            <button class="active" data-rank="3" data-dir="max" onclick="setDir(3,'max',this)">MAX</button>
+            <button data-rank="3" data-dir="min" onclick="setDir(3,'min',this)">MIN</button>
+          </div>
+        </div>
+        <div class="threshold-row">
+          <span>Keep top %</span>
+          <input type="number" id="r3keep" placeholder="default 25%" step="1" min="1" max="100">
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-label">
+        <span id="progressLabel">Sampling...</span>
+        <span id="progressPct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </div>
+
+    <button class="run-btn" id="runBtn" onclick="runSweep()" disabled>
+      ▶ Run Sweep
+    </button>
+    <button id="cancelBtn" onclick="cancelSweep()" style="display:none;width:calc(100% - 32px);margin:0 16px 8px;font-size:12px;padding:8px 14px;border:0.5px solid var(--warn);border-radius:20px;background:transparent;color:var(--warn);cursor:pointer;font-family:'Outfit',sans-serif">
+      ✕ Cancel &amp; show results
+    </button>
+
+    <div style="margin:0 16px 16px;padding:12px;background:var(--panel);border:1px solid var(--border);border-radius:8px;flex-shrink:0">
+      <div style="font-family:'Azeret Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Metric key</div>
+      <div id="metricKeyBody" style="display:flex;flex-direction:column;gap:5px;font-family:'Azeret Mono',monospace;font-size:10px;line-height:1.5">
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent);font-size:13px">α</span>
+          <span><span style="color:var(--text)">Anisotropy Ratio</span> <span style="color:var(--muted)">— strongest vs. weakest axis</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent)">E/ρ</span>
+          <span><span style="color:var(--text)">Stiff / Density</span> <span style="color:var(--muted)">— mean stiffness per unit material</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent)">α/ρ</span>
+          <span><span style="color:var(--text)">Aniso / Density</span> <span style="color:var(--muted)">— directional bias per unit material</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent);font-size:13px">Ξ</span>
+          <span><span style="color:var(--text)">Axial Dom.</span> <span style="color:var(--muted)">— peak axis vs. other two combined</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent);font-size:13px">Ω</span>
+          <span><span style="color:var(--text)">Ortho Spread</span> <span style="color:var(--muted)">— spread across all three axes</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent);font-size:13px">λ</span>
+          <span><span style="color:var(--text)">Load Path Eff.</span> <span style="color:var(--muted)">— peak E / (ρ × Es) — pure geometry efficiency</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent)">ax</span>
+          <span><span style="color:var(--text)">Stiff Axis</span> <span style="color:var(--muted)">— X/Y/Z direction of peak stiffness</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent);font-size:13px">κ</span>
+          <span><span style="color:var(--text)">Connectivity</span> <span style="color:var(--muted)">— fraction of axes mechanically connected</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent)">kx</span>
+          <span><span style="color:var(--text)">Thermal Cond. X</span> <span style="color:var(--muted)">— effective k in X direction</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent)">kα</span>
+          <span><span style="color:var(--text)">Thermal Aniso.</span> <span style="color:var(--muted)">— max vs. min directional conductivity</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent)">k/ρ</span>
+          <span><span style="color:var(--text)">Thermal / Density</span> <span style="color:var(--muted)">— mean k per unit material volume</span></span>
+        </div>
+        <div style="display:grid;grid-template-columns:24px 1fr;gap:4px;align-items:baseline">
+          <span style="color:var(--accent)">ρ%</span>
+          <span><span style="color:var(--text)">Volume Fraction</span> <span style="color:var(--muted)">— % of unit cell that is solid material</span></span>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Stats -->
+    <div class="stats-bar">
+      <div class="stat-card c1">
+        <div class="stat-val" id="statSampled">—</div>
+        <div class="stat-label">Sampled</div>
+      </div>
+      <div class="stat-card c-r1">
+        <div class="stat-val" id="statRank1">—</div>
+        <div class="stat-label">After Rank 1</div>
+        <div class="stat-sublabel" id="statRank1Pct"></div>
+      </div>
+      <div class="stat-card c-r2">
+        <div class="stat-val" id="statRank2">—</div>
+        <div class="stat-label">After Rank 2</div>
+        <div class="stat-sublabel" id="statRank2Pct"></div>
+      </div>
+      <div class="stat-card c-r3">
+        <div class="stat-val" id="statRank3">—</div>
+        <div class="stat-label">After Rank 3</div>
+        <div class="stat-sublabel" id="statRank3Pct"></div>
+      </div>
+      <div class="stat-card c2">
+        <div class="stat-val" id="statPeakR1">—</div>
+        <div class="stat-label" id="statPeakR1Label">Peak R1</div>
+        <div class="stat-sublabel" id="statPeakR1Sub" style="color:var(--muted);font-size:10px">no filter</div>
+      </div>
+      <div class="stat-card c3">
+        <div class="stat-val" id="statPeakR2">—</div>
+        <div class="stat-label" id="statPeakR2Label">Peak R2</div>
+        <div class="stat-sublabel" id="statPeakR2Sub" style="color:var(--muted);font-size:10px">no filter</div>
+      </div>
+      <div class="stat-card c4">
+        <div class="stat-val" id="statPeakR3">—</div>
+        <div class="stat-label" id="statPeakR3Label">Peak R3</div>
+        <div class="stat-sublabel" id="statPeakR3Sub" style="color:var(--muted);font-size:10px">no filter</div>
+      </div>
+    </div>
+
+    <!-- Log + Preview row -->
+    <div class="log-preview-row">
+
+      <!-- Log -->
+      <div class="log-panel">
+        <div class="panel-header">
+          <div class="panel-title">Pipeline Log</div>
+          <div class="panel-badge" id="logBadge">idle</div>
+        </div>
+        <div class="log-body" id="logBody">
+          <div class="log-line">
+            <span class="log-time">—</span>
+            <span class="log-msg">Drop a JSON recipe to begin.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Surface Preview -->
+      <div class="preview-panel">
+        <div class="panel-header">
+          <div class="panel-title">Design Space</div>
+          <div class="panel-badge" id="plotBadge">run sweep to populate</div>
+          <div class="mode-toggle-group" id="colorModeToggle" style="margin-left:8px">
+            <button class="mode-toggle-btn active" onclick="setColorMode('rank',this)">Rank</button>
+            <button class="mode-toggle-btn" onclick="setColorMode('terms',this)">Terms</button>
+          </div>
+        </div>
+        <div class="preview-body" style="background:var(--surface)">
+          <canvas id="plotCanvas" style="width:100%;height:100%;display:block;opacity:1"></canvas>
+          <div class="preview-empty" id="plotEmpty">
+            <div class="empty-icon" style="font-size:28px;opacity:0.2">⬡</div>
+            <div style="font-size:12px;color:var(--muted2);margin-top:8px">Run a sweep to see<br>the design space</div>
+          </div>
+          <div class="preview-info" id="plotInfo"></div>
+        </div>
+      </div>
+
+      <!-- Surface Preview -->
+      <div class="preview-panel">
+        <div class="panel-header">
+          <div class="panel-title">Surface Preview</div>
+          <div class="panel-badge" id="previewBadge">hover a row</div>
+        </div>
+        <div class="preview-body">
+          <canvas id="previewCanvas"></canvas>
+          <div class="preview-empty" id="previewEmpty">
+            <div class="empty-icon" style="font-size:28px;opacity:0.2">⬡</div>
+            <div style="font-size:12px;color:var(--muted2);margin-top:8px">Hover a result row<br>to preview its surface</div>
+          </div>
+          <div class="preview-info" id="previewInfo"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Results -->
+    <div class="results-panel">
+      <div class="panel-header">
+        <div class="panel-title">Results</div>
+        <div class="mode-toggle-group" style="margin-left:8px">
+          <button class="mode-toggle-btn active" onclick="setRankMode('ideal',this)">Ideal Corner</button>
+          <button class="mode-toggle-btn" onclick="setRankMode('outlier',this)">Outlier</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
+          <div style="font-family:'Azeret Mono',monospace;font-size:10px;color:var(--muted)" id="selectedLabel">click a row to select</div>
+          <button id="validateBtn" onclick="exportResults()"
+            style="font-family:'Azeret Mono',monospace;font-size:11px;padding:4px 12px;
+            border:1px solid rgba(0,153,255,0.4);border-radius:20px;background:transparent;
+            color:var(--accent2);cursor:pointer;transition:all 0.2s;white-space:nowrap">
+            ↓ Export Results
+          </button>
+          <button id="exportDesignBtn" onclick="exportSelectedDesign()" disabled
+            style="font-family:'Azeret Mono',monospace;font-size:11px;padding:4px 12px;
+            border:1px solid var(--border2);border-radius:20px;background:transparent;
+            color:var(--muted);cursor:not-allowed;transition:all 0.2s;white-space:nowrap">
+            ↓ Export Design
+          </button>
+        </div>
+        <div class="panel-badge" id="resultsBadge" style="margin-left:10px">0 designs</div>
+      </div>
+      <div class="table-wrap" id="tableWrap">
+        <div class="empty-state">
+          <div class="empty-icon">⬡</div>
+          <div class="empty-title">No results yet</div>
+          <div class="empty-sub">Run a sweep to populate this table</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+</div>
+
+<script src="solver.js"></script>
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let baseRecipe = null;
+let results = [];
+let directions = { 1: 'max', 2: 'max', 3: 'max' };
+let currentFiltered = [];
+let sortState = { col: null, dir: 'desc' };
+let rankMode = 'ideal';   // 'ideal' | 'outlier'
+let colorMode = 'rank';   // 'rank'  | 'terms'
+
+// detectPISurfaceType — used by generateSample to look up the shift library
+function detectPISurfaceType(recipe) {
+  if (!recipe) return null;
+  const preset = recipe.surface?.preset || recipe.meta?.preset;
+  return (preset && PI_SHIFT_LIBRARY[preset]) ? preset : null;
+}
+
+// ─── State ───────────────────────────────────────────────────────────────────
+let baseRecipe = null;
+let results = [];
+let directions = { 1: 'max', 2: 'max', 3: 'max' };
+let currentFiltered = [];
+let sortState = { col: null, dir: 'desc' };
+let rankMode = 'ideal';   // 'ideal' | 'outlier'
+let colorMode = 'rank';   // 'rank'  | 'terms'
+
+function setRankMode(mode, btn) {
+  rankMode = mode;
+  btn.closest('.mode-toggle-group').querySelectorAll('.mode-toggle-btn')
+    .forEach(b => b.classList.toggle('active', b === btn));
+  if (currentFiltered.length > 0) applyFinalRanking(currentFiltered);
+}
+
+function setColorMode(mode, btn) {
+  colorMode = mode;
+  btn.closest('.mode-toggle-group').querySelectorAll('.mode-toggle-btn')
+    .forEach(b => b.classList.toggle('active', b === btn));
+  if (mode === 'terms' && plotData.length >= 6) runKMeans(plotData, 6);
+  drawPlot();
+}
+
+// ─── KNN Outlier scoring ──────────────────────────────────────────────────────
+function computeOutlierScores(data, k = 5) {
+  const axes = getPlotAxes();
+  const vals = key => data.map(d => d[key] || 0);
+  const minmax = key => { const v = vals(key); const mn = Math.min(...v), mx = Math.max(...v); return { mn, range: mx - mn || 1 }; };
+  const nx = minmax(axes.x), ny = minmax(axes.y), nz = minmax(axes.z);
+  const norm = (v, mm) => (v - mm.mn) / mm.range;
+
+  data.forEach((d, i) => {
+    const px = norm(d[axes.x] || 0, nx);
+    const py = norm(d[axes.y] || 0, ny);
+    const pz = norm(d[axes.z] || 0, nz);
+    // compute distance to all other points, keep k nearest
+    const dists = data
+      .map((o, j) => {
+        if (i === j) return Infinity;
+        const ox = norm(o[axes.x] || 0, nx);
+        const oy = norm(o[axes.y] || 0, ny);
+        const oz = norm(o[axes.z] || 0, nz);
+        return Math.sqrt((px-ox)**2 + (py-oy)**2 + (pz-oz)**2);
+      })
+      .sort((a, b) => a - b)
+      .slice(0, k);
+    d._outlierScore = dists.reduce((s, v) => s + v, 0) / k;
+  });
+}
+
+// ─── K-means clustering for plot coloring ────────────────────────────────────
+const CLUSTER_COLORS = [
+  '#ff6b6b', // coral
+  '#ffd166', // amber
+  '#ff9f43', // orange
+  '#fd79a8', // pink
+  '#e17055', // terracotta
+  '#fdcb6e', // gold
+];
+
+let clusterAssignments = new Map(); // design id → cluster index
+
+function runKMeans(data, k = 6, iterations = 20) {
+  const axes = getPlotAxes();
+  const vals = key => data.map(d => d[key] || 0);
+  const minmax = key => {
+    const v = vals(key);
+    const mn = Math.min(...v), mx = Math.max(...v);
+    return { mn, range: mx - mn || 1 };
+  };
+  const nx = minmax(axes.x), ny = minmax(axes.y), nz = minmax(axes.z);
+  const norm = (v, mm) => (v - mm.mn) / mm.range;
+
+  // Normalize all points to [0,1]
+  const pts = data.map(d => ({
+    id: d.id,
+    x: norm(d[axes.x] || 0, nx),
+    y: norm(d[axes.y] || 0, ny),
+    z: norm(d[axes.z] || 0, nz),
+  }));
+
+  // Initialize centroids by spreading evenly through sorted data
+  let centroids = Array.from({ length: k }, (_, i) =>
+    ({ ...pts[Math.floor(i * pts.length / k)] })
+  );
+
+  let assignments = new Array(pts.length).fill(0);
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Assign each point to nearest centroid
+    pts.forEach((p, i) => {
+      let minDist = Infinity, best = 0;
+      centroids.forEach((c, ci) => {
+        const d = Math.sqrt((p.x-c.x)**2 + (p.y-c.y)**2 + (p.z-c.z)**2);
+        if (d < minDist) { minDist = d; best = ci; }
+      });
+      assignments[i] = best;
+    });
+
+    // Recompute centroids
+    centroids = centroids.map((_, ci) => {
+      const members = pts.filter((_, i) => assignments[i] === ci);
+      if (members.length === 0) return centroids[ci];
+      return {
+        x: members.reduce((s, p) => s + p.x, 0) / members.length,
+        y: members.reduce((s, p) => s + p.y, 0) / members.length,
+        z: members.reduce((s, p) => s + p.z, 0) / members.length,
+      };
+    });
+  }
+
+  // Store assignments
+  clusterAssignments.clear();
+  pts.forEach((p, i) => clusterAssignments.set(p.id, assignments[i]));
+}
+
+function getPointColor(d, fr) {
+  if (colorMode === 'terms') {
+    const cluster = clusterAssignments.get(d.id) ?? 0;
+    return CLUSTER_COLORS[cluster % CLUSTER_COLORS.length];
+  }
+  return fr === 1 ? '#00e5c0' : fr === 2 ? '#0099ff' : fr === 3 ? '#9b6fff' : '#4a7a9b';
+}
+
+// ─── Final ranking (called after filters and on mode switch) ──────────────────
+function applyFinalRanking(filtered) {
+  const activeAxes = [
+    { key: document.getElementById('r1metric')?.value, dir: directions[1] || 'max' },
+    { key: document.getElementById('r2metric')?.value, dir: directions[2] || 'max' },
+    { key: document.getElementById('r3metric')?.value, dir: directions[3] || 'max' },
+  ].filter(a => a.key && a.key !== 'none');
+
+  if (rankMode === 'outlier') {
+    computeOutlierScores(filtered);
+    filtered.sort((a, b) => b._outlierScore - a._outlierScore);
+    log('info', `Ranked by outlier score (KNN k=5) — most isolated designs first`);
+  } else {
+    // Distance from ideal corner
+    if (activeAxes.length > 0) {
+      activeAxes.forEach(ax => {
+        const vals = filtered.map(d => d[ax.key] || 0);
+        ax.mn = Math.min(...vals);
+        ax.mx = Math.max(...vals);
+        ax.range = ax.mx - ax.mn || 1;
+      });
+      filtered.forEach(d => {
+        let distSq = 0;
+        activeAxes.forEach(ax => {
+          const t = (d[ax.key] - ax.mn) / ax.range;
+          const delta = ax.dir === 'max' ? (1 - t) : t;
+          distSq += delta * delta;
+        });
+        d._idealDist = Math.sqrt(distSq);
+      });
+      filtered.sort((a, b) => a._idealDist - b._idealDist);
+      log('info', `Ranked by distance from ideal corner across ${activeAxes.length} metrics`);
+    }
+  }
+
+  filtered.forEach((d, i) => { d.filterRank = i + 1; });
+  renderTable(filtered);
+  updatePlot(filtered);
+}
+
+// ─── File loading ─────────────────────────────────────────────────────────────
+document.getElementById('fileInput').addEventListener('change', e => {
+  loadFile(e.target.files[0]);
+});
+
+const dz = document.getElementById('recipeCard');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor = 'var(--accent)'; });
+dz.addEventListener('dragleave', () => dz.style.borderColor = '');
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.style.borderColor = '';
+  loadFile(e.dataTransfer.files[0]);
+});
+
+// ─── Material database ────────────────────────────────────────────────────────
+// E: GPa, nu: Poisson, k: W/m·K (thermal conductivity), rho_mat: kg/m³
+const MATERIALS = {
+  // Biomedical
+  'Ti6Al4V':    { E: 114,  nu: 0.33, k: 7.2,   rho_mat: 4430,  label: 'Ti6Al4V' },
+  'PEEK':       { E: 3.6,  nu: 0.40, k: 0.25,  rho_mat: 1320,  label: 'PEEK' },
+  'SS316L':     { E: 193,  nu: 0.27, k: 16.0,  rho_mat: 7980,  label: 'SS316L' },
+  'HA':         { E: 80,   nu: 0.28, k: 1.3,   rho_mat: 3160,  label: 'HA Ceramic' },
+  // Aerospace
+  'Al7075':     { E: 71,   nu: 0.33, k: 130,   rho_mat: 2810,  label: 'Al 7075' },
+  'Inconel718': { E: 200,  nu: 0.29, k: 11.4,  rho_mat: 8190,  label: 'Inconel 718' },
+  'CFRP':       { E: 70,   nu: 0.10, k: 5.0,   rho_mat: 1600,  label: 'CFRP (UD)' },
+  // Oil & Gas
+  'Inconel625': { E: 208,  nu: 0.31, k: 9.8,   rho_mat: 8440,  label: 'Inconel 625' },
+  'ToolSteel':  { E: 210,  nu: 0.28, k: 35.0,  rho_mat: 7850,  label: 'Tool Steel' },
+  // Automotive
+  'Al6061':     { E: 69,   nu: 0.33, k: 167,   rho_mat: 2700,  label: 'Al 6061' },
+  'HSLA':       { E: 200,  nu: 0.29, k: 50.0,  rho_mat: 7800,  label: 'HSLA Steel' },
+  'PA12':       { E: 1.6,  nu: 0.39, k: 0.23,  rho_mat: 1010,  label: 'Nylon PA12' },
+  // Thermal
+  'Copper':     { E: 110,  nu: 0.34, k: 401,   rho_mat: 8960,  label: 'Copper' },
+  'Al6061_t':   { E: 69,   nu: 0.33, k: 167,   rho_mat: 2700,  label: 'Al 6061' },
+};
+
+const DOMAIN_MATERIALS = {
+  general:    [],
+  biomedical: ['Ti6Al4V','PEEK','SS316L','HA'],
+  aerospace:  ['Ti6Al4V','Al7075','Inconel718','CFRP'],
+  oilgas:     ['SS316L','Inconel625','ToolSteel'],
+  automotive: ['Al6061','HSLA','PA12','SS316L'],
+  thermal:    ['Copper','Al6061_t','Ti6Al4V','SS316L'],
+};
+
+let currentMaterial = null; // null = agnostic
+
+// ─── Domain configuration — visible metrics + rank defaults ──────────────────
+// 'show' controls which columns appear in the table and metric key.
+// All metrics are always computed and exported regardless.
+// r1/r2/r3: { metric, dir } — null means leave as-is
+const DOMAIN_CONFIG = {
+  general:    { sigma_ref: 1,   show: ['anisotropy','Ex_GPa','Ey_GPa','Ez_GPa','stiffness_density','aniso_efficiency','axial_dominance','ortho_contrast','load_path_eff','stiff_axis','connect_idx','U_strain','microstrain_avg','pore_size','throat_size','perc_idx','volume_fraction'], r1:null, r2:null, r3:null },
+  biomedical: { sigma_ref: 2,   show: ['connect_idx','Ex_GPa','Ey_GPa','Ez_GPa','anisotropy','stiffness_density','U_strain','microstrain_avg','pore_size','throat_size','perc_idx','volume_fraction'], r1:{metric:'microstrain_avg',dir:'min'}, r2:{metric:'pore_size',dir:'max'}, r3:{metric:'throat_size',dir:'max'} },
+  aerospace:  { sigma_ref: 100, show: ['anisotropy','stiffness_density','load_path_eff','Ex_GPa','Ey_GPa','Ez_GPa','axial_dominance','aniso_efficiency','stiff_axis','connect_idx','volume_fraction'], r1:{metric:'load_path_eff',dir:'max'}, r2:{metric:'anisotropy',dir:'max'}, r3:{metric:'volume_fraction',dir:'min'} },
+  oilgas:     { sigma_ref: 50,  show: ['connect_idx','anisotropy','stiffness_density','Ex_GPa','Ey_GPa','Ez_GPa','ortho_contrast','pore_size','throat_size','perc_idx','volume_fraction'], r1:{metric:'connect_idx',dir:'max'}, r2:{metric:'anisotropy',dir:'min'}, r3:{metric:'stiffness_density',dir:'max'} },
+  automotive: { sigma_ref: 50,  show: ['ortho_contrast','stiffness_density','axial_dominance','aniso_efficiency','Ex_GPa','Ey_GPa','Ez_GPa','connect_idx','U_strain','microstrain_avg','volume_fraction'], r1:{metric:'ortho_contrast',dir:'max'}, r2:{metric:'stiffness_density',dir:'max'}, r3:{metric:'volume_fraction',dir:'min'} },
+  thermal:    { sigma_ref: null, show: ['keff_x','keff_y','keff_z','thermal_anisotropy','k_density','connect_idx','pore_size','throat_size','perc_idx','volume_fraction','surface_complexity'], r1:{metric:'k_density',dir:'max'}, r2:{metric:'thermal_anisotropy',dir:'max'}, r3:{metric:'connect_idx',dir:'max'} },
+};
+
+// Currently active visible set — starts as general (all)
+let activeDomainShow = DOMAIN_CONFIG.general.show;
+
+// Rebuild filter dropdowns to show only metrics relevant to current domain
+function rebuildFilterDropdowns(domain) {
+  const cfg = DOMAIN_CONFIG[domain] || DOMAIN_CONFIG.general;
+  const metricsToShow = cfg.show || [];
+  
+  // Metric display names
+  const metricNames = {
+    anisotropy: 'Anisotropy ratio',
+    Ex_GPa: 'Stiffness — Ex',
+    Ey_GPa: 'Stiffness — Ey',
+    Ez_GPa: 'Stiffness — Ez',
+    stiffness_density: 'Stiffness / Density',
+    aniso_efficiency: 'Anisotropy efficiency',
+    axial_dominance: 'Axial dominance',
+    ortho_contrast: 'Orthotropic contrast',
+    load_path_eff: 'Load path efficiency (λ)',
+    stiff_axis: 'Stiff axis',
+    connect_idx: 'Connectivity index (κ)',
+    keff_x: 'Thermal cond. — kx',
+    keff_y: 'Thermal cond. — ky',
+    keff_z: 'Thermal cond. — kz',
+    thermal_anisotropy: 'Thermal anisotropy (kα)',
+    k_density: 'Thermal / Density (k/ρ)',
+    U_strain: 'Strain energy density (U)',
+    microstrain_x: 'Microstrain X (με)',
+    microstrain_y: 'Microstrain Y (με)',
+    microstrain_z: 'Microstrain Z (με)',
+    microstrain_avg: 'Avg microstrain (με̄)',
+    pore_size: 'Mean pore size (φ)',
+    throat_size: 'Min throat diameter (φt)',
+    perc_idx: 'Void percolation (perc)',
+    surface_complexity: 'Surface complexity',
+    volume_fraction: 'Volume fraction'
+  };
+  
+  // Build options HTML
+  const optionsHTML = metricsToShow.map(key => 
+    `<option value="${key}">${metricNames[key] || key}</option>`
+  ).join('');
+  
+  // Get current selections
+  const r1Current = document.getElementById('r1metric')?.value;
+  const r2Current = document.getElementById('r2metric')?.value;
+  const r3Current = document.getElementById('r3metric')?.value;
+  
+  // Update all three dropdowns
+  const r1 = document.getElementById('r1metric');
+  const r2 = document.getElementById('r2metric');
+  const r3 = document.getElementById('r3metric');
+  
+  if (r1) r1.innerHTML = optionsHTML;
+  if (r2) r2.innerHTML = optionsHTML;
+  if (r3) r3.innerHTML = optionsHTML;
+  
+  // Restore selections if they're still valid in this domain
+  if (r1 && metricsToShow.includes(r1Current)) r1.value = r1Current;
+  if (r2 && metricsToShow.includes(r2Current)) r2.value = r2Current;
+  if (r3 && metricsToShow.includes(r3Current)) r3.value = r3Current;
+}
+
+function onDomainChange() {
+  const domain = document.getElementById('domainSel').value;
+  const matGroup = document.getElementById('materialGroup');
+  const matSel = document.getElementById('materialSel');
+  const mats = DOMAIN_MATERIALS[domain] || [];
+  const cfg = DOMAIN_CONFIG[domain] || DOMAIN_CONFIG.general;
+  // Reference stress input — hidden for thermal (not applicable) and general (normalized)
+  const sigmaGroup = document.getElementById('sigmaRefGroup');
+  const sigmaInput = document.getElementById('sigmaRef');
+  if (cfg.sigma_ref === null || domain === 'general') {
+    sigmaGroup.style.display = 'none';
+  } else {
+    sigmaGroup.style.display = 'block';
+    sigmaInput.value = cfg.sigma_ref;
+  }
+
+  activeDomainShow = cfg.show;
+
+  // Material selector
+  if (mats.length === 0) {
+    matGroup.style.display = 'none';
+    currentMaterial = null;
+  } else {
+    matGroup.style.display = 'block';
+    matSel.innerHTML = mats.map(k =>
+      `<option value="${k}">${MATERIALS[k].label}</option>`
+    ).join('');
+    currentMaterial = MATERIALS[mats[0]];
+    updateMaterialProps();
+  }
+
+  // Rebuild filter dropdowns to show only domain-relevant metrics
+  rebuildFilterDropdowns(domain);
+
+  // Rank filter defaults
+  if (cfg.r1) {
+    const s = document.getElementById('r1metric');
+    if (s) { s.value = cfg.r1.metric; setDirBtn(1, cfg.r1.dir); }
+  }
+  if (cfg.r2) {
+    const s = document.getElementById('r2metric');
+    if (s) { s.value = cfg.r2.metric; setDirBtn(2, cfg.r2.dir); }
+  }
+  if (cfg.r3) {
+    const s = document.getElementById('r3metric');
+    if (s) { s.value = cfg.r3.metric; setDirBtn(3, cfg.r3.dir); }
+  }
+
+  // Update metric key to reflect visible set
+  renderMetricKey();
+
+  // Re-render table if we have results
+  if (currentFiltered.length > 0) renderTable(currentFiltered);
+}
+
+function setDirBtn(rank, dir) {
+  directions[rank] = dir;
+  document.querySelectorAll(`[data-rank="${rank}"]`).forEach(b => {
+    b.classList.toggle('active', b.dataset.dir === dir);
+  });
+}
+
+function renderMetricKey() {
+  const ALL_KEY_ENTRIES = [
+    { key:'anisotropy',      sym:'α',    name:'Anisotropy Ratio',    desc:'strongest vs. weakest axis' },
+    { key:'stiffness_density',sym:'E/ρ', name:'Stiff / Density',     desc:'mean stiffness per unit material' },
+    { key:'aniso_efficiency', sym:'α/ρ', name:'Aniso / Density',     desc:'directional bias per unit material' },
+    { key:'axial_dominance',  sym:'Ξ',   name:'Axial Dom.',          desc:'peak axis vs. other two combined' },
+    { key:'ortho_contrast',   sym:'Ω',   name:'Ortho Spread',        desc:'spread across all three axes' },
+    { key:'load_path_eff',    sym:'λ',   name:'Load Path Eff.',      desc:'peak E / (ρ × Es)' },
+    { key:'stiff_axis',       sym:'ax',  name:'Stiff Axis',          desc:'X/Y/Z direction of peak stiffness' },
+    { key:'connect_idx',      sym:'κ',   name:'Connectivity',        desc:'fraction of axes mechanically connected' },
+    { key:'keff_x',           sym:'kx',  name:'Thermal Cond. X',     desc:'effective k in X direction' },
+    { key:'keff_y',           sym:'ky',  name:'Thermal Cond. Y',     desc:'effective k in Y direction' },
+    { key:'keff_z',           sym:'kz',  name:'Thermal Cond. Z',     desc:'effective k in Z direction' },
+    { key:'thermal_anisotropy',sym:'kα', name:'Thermal Aniso.',      desc:'max vs. min directional conductivity' },
+    { key:'k_density',        sym:'k/ρ', name:'Thermal / Density',   desc:'mean k per unit material volume' },
+    { key:'U_strain',         sym:'U',   name:'Strain Energy',       desc:'mean strain energy density (kJ/m³) under ref stress' },
+    { key:'microstrain_x',    sym:'με·X',name:'Microstrain X',       desc:'με under ref load in X' },
+    { key:'microstrain_y',    sym:'με·Y',name:'Microstrain Y',       desc:'με under ref load in Y' },
+    { key:'microstrain_z',    sym:'με·Z',name:'Microstrain Z',       desc:'με under ref load in Z' },
+    { key:'microstrain_avg',  sym:'με̄', name:'Avg Microstrain (Frost)',  desc:'isotropic mean · Frost (1987): <200 disuse · 200–1500 maintenance · 1500–3000 osteogenic ✓ · >3000 overload' },
+    { key:'pore_size',        sym:'φ',   name:'Mean Pore Size',      desc:'inscribed sphere diameter (µm)' },
+    { key:'throat_size',      sym:'φt',  name:'Min Throat Diam.',    desc:'narrowest pore connection (µm)' },
+    { key:'perc_idx',         sym:'perc',name:'Void Percolation',    desc:'fraction of axes with open pore channels' },
+    { key:'surface_complexity',sym:'SA', name:'Surface Complexity',  desc:'SA/V proxy — normalized' },
+    { key:'volume_fraction',  sym:'ρ%',  name:'Volume Fraction',     desc:'% of unit cell that is solid material' },
+  ];
+
+  const visible = activeDomainShow;
+  const entries = ALL_KEY_ENTRIES.filter(e => visible.includes(e.key));
+  const html = entries.map(e => `
+    <div style="display:grid;grid-template-columns:28px 1fr;gap:4px;align-items:baseline">
+      <span style="color:var(--accent);font-size:11px;font-family:'Azeret Mono',monospace">${e.sym}</span>
+      <span><span style="color:var(--text)">${e.name}</span> <span style="color:var(--muted)">— ${e.desc}</span></span>
+    </div>`).join('');
+
+  const container = document.getElementById('metricKeyBody');
+  if (container) container.innerHTML = html;
+}
+
+function onMaterialChange() {
+  const key = document.getElementById('materialSel').value;
+  currentMaterial = MATERIALS[key] || null;
+  updateMaterialProps();
+}
+
+function updateMaterialProps() {
+  const el = document.getElementById('materialProps');
+  if (!currentMaterial) { el.textContent = ''; return; }
+  el.textContent = `E=${currentMaterial.E} GPa · k=${currentMaterial.k} W/m·K`;
+}
+
+// Get current Es and ks for solver — falls back to recipe values or agnostic defaults
+function getSolverMaterial() {
+  if (currentMaterial) {
+    return { Es: currentMaterial.E, nu: currentMaterial.nu, ks: currentMaterial.k };
+  }
+  // Agnostic: use recipe values if available, else normalized defaults
+  return {
+    Es: baseRecipe?.homogenization?.E_solid_GPa || 100,
+    nu: baseRecipe?.homogenization?.poisson || 0.3,
+    ks: 1.0  // normalized — thermal results are ratios
+  };
+}
+
+// Get reference stress in GPa for strain energy / microstrain computation
+// User input is in MPa — convert to GPa to match Es units
+function getSigmaRef() {
+  const el = document.getElementById('sigmaRef');
+  if (!el || !el.value) return null;
+  return parseFloat(el.value) / 1000; // MPa → GPa
+}
+
+// Get voxel size in µm — used as cell size reference for pore analysis
+// Returns cell_size_mm for reconstruction inside analyzePores
+function getVoxelToUm() {
+  const el = document.getElementById('cellSize');
+  const mm = (el && el.value) ? parseFloat(el.value) : 2.0;
+  return mm * 1000 / 32; // µm per voxel at N=32 — analyzePores recovers mm internally
+}
+
+
+
+function loadFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      baseRecipe = JSON.parse(e.target.result.replace(/^\uFEFF/, '').trim());
+
+      // Resolve raw_preset surface types into explicit terms so the sweep can use them.
+      // These surfaces use double-frequency terms not expressible in the standard factor model,
+      // so we embed them as a single pre-evaluated JS function wrapped in a synthetic terms array.
+      if (baseRecipe.surface.type === 'raw_preset' || !baseRecipe.surface.terms) {
+        const preset = baseRecipe.surface.preset || baseRecipe.meta?.preset;
+        baseRecipe.surface.terms = resolveRawPreset(preset);
+        if (!baseRecipe.surface.terms) {
+          log('warn', `Raw preset "${preset}" could not be resolved to terms — sweep disabled`);
+          document.getElementById('runBtn').disabled = true;
+          return;
+        }
+      }
+
+      document.getElementById('fileName').textContent = file.name;
+      document.getElementById('fileMeta').textContent =
+        `preset: ${baseRecipe.meta?.preset || '?'} · ${baseRecipe.surface.terms.length} terms`;
+      document.getElementById('nominalLabel').textContent = `nominal scale: ${baseRecipe.geometry.cell_scale || 1.0}`;
+      document.getElementById('recipeEmpty').style.display = 'none';
+      document.getElementById('recipeLoaded').style.display = 'block';
+      document.getElementById('recipeCard').classList.add('loaded');
+      document.getElementById('runBtn').disabled = false;
+      buildTermToggles(baseRecipe.surface.terms);
+      updateScalePreview();
+      // Show preview of the base recipe immediately on load
+      const baseDesign = {
+        termObjects: baseRecipe.surface.terms.map(t => ({...t, factors: t.factors.map(f => ({...f}))})),
+        offset: baseRecipe.geometry.offset || 0,
+        scaleX: baseRecipe.geometry.cell_scale || 1.0,
+        scaleY: baseRecipe.geometry.cell_scale || 1.0,
+        scaleZ: baseRecipe.geometry.cell_scale || 1.0,
+        anisotropy: baseRecipe.homogenization?.anisotropy || 1.0
+      };
+      showPreview(baseDesign);
+      log('info', `Loaded: ${file.name}`);
+      
+      // Display mode-specific info
+      const mode = baseRecipe.geometry?.mode || 'solid';
+      let modeInfo = '';
+      if (mode === 'pi-tpms') {
+        const pipeR = baseRecipe.geometry?.pipe_radius || 0.1;
+        const shift = baseRecipe.geometry?.phase_shift || {x:0, y:0, z:0};
+        modeInfo = `PI-TPMS · pipeR ${pipeR.toFixed(3)} · shift (${shift.x},${shift.y},${shift.z})`;
+      } else if (mode === 'shell') {
+        const wallT = baseRecipe.geometry?.wall_thickness || 0.3;
+        modeInfo = `Shell · wall ${wallT.toFixed(3)} · offset ${baseRecipe.geometry.offset}`;
+      } else {
+        modeInfo = `Solid · offset ${baseRecipe.geometry.offset}`;
+      }
+      
+      log('accent', `Preset: ${baseRecipe.meta?.preset || 'custom'} · ${baseRecipe.surface.terms.length} terms · ${modeInfo} · scale ${baseRecipe.geometry.cell_scale || 1.0}`);
+    } catch(err) {
+      log('warn', `Failed to parse JSON: ${err.message}`);
+      log('warn', 'Check file was exported directly from tpms-builder');
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ─── Term toggles (retained for compatibility, UI removed) ───────────────────
+function buildTermToggles(terms) { /* no-op — term grid removed */ }
+function termLabel(term) { return ''; }
+
+// ─── Direction toggles ────────────────────────────────────────────────────────
+function setDir(rank, dir, btn) {
+  directions[rank] = dir;
+  const siblings = btn.parentElement.querySelectorAll('button');
+  siblings.forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ─── Sliders ──────────────────────────────────────────────────────────────────
+const samplesSlider = document.getElementById('samplesSlider');
+samplesSlider.addEventListener('input', () => {
+  document.getElementById('samplesVal').textContent = samplesSlider.value;
+});
+
+[document.getElementById('scaleXlo'), document.getElementById('scaleXhi'),
+ document.getElementById('scaleYlo'), document.getElementById('scaleYhi'),
+ document.getElementById('scaleZlo'), document.getElementById('scaleZhi')].forEach(el => {
+  el.addEventListener('input', updateScalePreview);
+});
+
+function updateScalePreview() {
+  if (!baseRecipe) return;
+  const nom = baseRecipe.geometry.cell_scale || 1.0;
+  const get = id => parseFloat(document.getElementById(id).value) || 0;
+  // lo/hi are % of nominal: 50 means 0.5× nominal, 200 means 2.0× nominal
+  const xlo = +(nom * get('scaleXlo') / 100).toFixed(3);
+  const xhi = +(nom * get('scaleXhi') / 100).toFixed(3);
+  const ylo = +(nom * get('scaleYlo') / 100).toFixed(3);
+  const yhi = +(nom * get('scaleYhi') / 100).toFixed(3);
+  const zlo = +(nom * get('scaleZlo') / 100).toFixed(3);
+  const zhi = +(nom * get('scaleZhi') / 100).toFixed(3);
+  document.getElementById('scaleRangePreview').innerHTML =
+    `<span style="color:#22d3ee">X</span> ${xlo} → ${xhi} &nbsp;` +
+    `<span style="color:#e879f9">Y</span> ${ylo} → ${yhi} &nbsp;` +
+    `<span style="color:#facc15">Z</span> ${zlo} → ${zhi}`;
+}
+
+
+
+
+
+
+
+
+
+
+  invalidateSolverCaches(); // rebuild Gamma tensors fresh for this run's Es/nu/ks
+
+  const nSamples = parseInt(samplesSlider.value);
+  const nom = baseRecipe.geometry.cell_scale || 1.0;
+  const mat = getSolverMaterial();
+  const Es = mat.Es;
+  const nu = mat.nu;
+  const ks = mat.ks;
+  const sigma_ref = getSigmaRef() ?? Es * 0.0001;
+  const voxelToUm = getVoxelToUm();
+
+  const get = id => parseFloat(document.getElementById(id).value) || 0;
+  const xLo = nom * get('scaleXlo') / 100;
+  const xHi = nom * get('scaleXhi') / 100;
+  const yLo = nom * get('scaleYlo') / 100;
+  const yHi = nom * get('scaleYhi') / 100;
+  const zLo = nom * get('scaleZlo') / 100;
+  const zHi = nom * get('scaleZhi') / 100;
+
+  const termToggles = []; // retained for compatibility, no longer used in sampling
+
+  log('accent', `Starting sweep: ${nSamples} samples`);
+  log('info', `Periodicity X: ${xLo.toFixed(2)}→${xHi.toFixed(2)} · Y: ${yLo.toFixed(2)}→${yHi.toFixed(2)} · Z: ${zLo.toFixed(2)}→${zHi.toFixed(2)}`);
+
+  const progressWrap = document.getElementById('progressWrap');
+  const progressFill = document.getElementById('progressFill');
+  const progressLabel = document.getElementById('progressLabel');
+  const progressPct = document.getElementById('progressPct');
+  progressWrap.classList.add('visible');
+  document.getElementById('logBadge').textContent = 'running';
+
+  const sweepMode = baseRecipe.geometry?.mode || 'solid';
+  const sweepWall = baseRecipe.geometry?.wall_thickness || 0.3;
+
+  const BATCH = 10;
+  let attempts = 0;
+  const MAX_ATTEMPTS = nSamples * 20; // safety cap — never spin forever
+  let validCount = 0;
+  let discarded = 0;
+
+  while (validCount < nSamples && attempts < MAX_ATTEMPTS) {
+    if (window._sweepCancelled) {
+      log('warn', `Sweep cancelled at ${validCount} samples — showing results so far`);
+      break;
+    }
+    // sample a batch then yield to UI
+    for (let b = 0; b < BATCH && validCount < nSamples && attempts < MAX_ATTEMPTS; b++) {
+      attempts++;
+
+      const scaleX = xLo + Math.random() * (xHi - xLo);
+      const scaleY = yLo + Math.random() * (yHi - yLo);
+      const scaleZ = zLo + Math.random() * (zHi - zLo);
+
+      // PI-TPMS mode: preserve surface formula, only vary pipeR and shift
+      // Solid/Shell mode: mutate surface terms for exploration
+      let terms;
+      let finalScaleX = scaleX, finalScaleY = scaleY, finalScaleZ = scaleZ;
+      
+      if (sweepMode === 'pi-tpms') {
+        // Keep original surface UNCHANGED — pure (r, shift) exploration
+        terms = baseRecipe.surface.terms.map(t => ({
+          ...t,
+          on: true,
+          coef: t.coef,  // Preserve original coefficient
+          factors: t.factors.map(f => ({
+            trig: f.trig,  // Preserve trig function
+            fx: f.fx,      // Preserve frequencies
+            fy: f.fy,
+            fz: f.fz
+          }))
+        }));
+        
+        // Force isotropic scaling to preserve cubic periodicity
+        // PI-TPMS assumes triply periodic in cubic domain
+        finalScaleX = finalScaleY = finalScaleZ = nom;
+      } else {
+        // Solid/Shell: mutate terms for surface exploration
+        const TRIG_SWAP_PROB = 0.20;
+        const FREQ_JITTER    = 0.20;
+        
+        terms = baseRecipe.surface.terms.map(t => ({
+          ...t,
+          on: true,
+          coef: +(0.05 + Math.random() * 4.95).toFixed(3),
+          factors: t.factors.map(f => {
+            let trig = f.trig;
+            if (Math.random() < TRIG_SWAP_PROB) {
+              trig = trig.startsWith('sin') ? trig.replace('sin', 'cos') : trig.replace('cos', 'sin');
+            }
+            const jitter = v => Math.max(0.5, Math.min(8, v * (1 + (Math.random() * 2 - 1) * FREQ_JITTER)));
+            return { trig, fx: +jitter(f.fx).toFixed(2), fy: +jitter(f.fy).toFixed(2), fz: +jitter(f.fz).toFixed(2) };
+          })
+        }));
+      }
+      const nOn = terms.length;
+
+      // PI-TPMS: vary pipe radius and phase shift (discrete eighths for periodicity)
+      // Solid/shell: vary offset and normal weights as before
+      let offset = 0, sweepWallJittered = sweepWall, nWeights = null;
+      let sweepPipeR = null, sweepPhaseShift = null;
+
+      if (sweepMode === 'pi-tpms') {
+        // Pipe radius: jitter ±40% around base value, clamped to sensible range
+        const basePipeR = baseRecipe.geometry?.pipe_radius || 0.1;
+        sweepPipeR = +Math.max(0.02, Math.min(0.35,
+          basePipeR * (0.6 + Math.random() * 0.8))).toFixed(3);
+        
+        // Phase shift: random discrete eighths, skip degenerates (optimized)
+        // NOTE: 1.0 excluded — a full-period shift is identical to 0 for all TPMS surfaces
+        // (all terms are sin/cos with integer frequencies, so period 2π maps to same field)
+        const EIGHTHS = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875];
+        
+        // Precompute degenerate shifts as integer indices (fast lookup)
+        const surfName = detectPISurfaceType(baseRecipe);
+        const degenerateIndices = new Set();
+        degenerateIndices.add(0); // (0,0,0) always degenerate
+        if (surfName && PI_SHIFT_LIBRARY[surfName]) {
+          const degenerates = PI_SHIFT_LIBRARY[surfName].degenerate || [];
+          for (const d of degenerates) {
+            const ix = EIGHTHS.indexOf(d[0]);
+            const iy = EIGHTHS.indexOf(d[1]);
+            const iz = EIGHTHS.indexOf(d[2]);
+            if (ix >= 0 && iy >= 0 && iz >= 0) {
+              degenerateIndices.add(ix * 81 + iy * 9 + iz); // Hash to single int
+            }
+          }
+        }
+        
+        // Sample shift (fast integer check)
+        let ix, iy, iz;
+        do {
+          ix = Math.floor(Math.random() * 9);
+          iy = Math.floor(Math.random() * 9);
+          iz = Math.floor(Math.random() * 9);
+        } while (degenerateIndices.has(ix * 81 + iy * 9 + iz));
+        
+        sweepPhaseShift = { x: EIGHTHS[ix], y: EIGHTHS[iy], z: EIGHTHS[iz] };
+      } else if (sweepMode === 'shell') {
+        offset = baseRecipe.geometry.offset;
+        const rx = 0.20 + Math.random() * 2.8;
+        const ry = 0.20 + Math.random() * 2.8;
+        const rz = 0.20 + Math.random() * 2.8;
+        const mean = (rx + ry + rz) / 3;
+        nWeights = { wx: rx/mean, wy: ry/mean, wz: rz/mean };
+      } else {
+        offset = baseRecipe.geometry.offset + (Math.random() - 0.5) * 0.4;
+      }
+
+      const baseline = { ...baseRecipe.homogenization, cell_scale: nom };
+      const hom = estimateHomogenization(terms, offset, finalScaleX, finalScaleY, finalScaleZ, Es, nu, baseline, sweepMode, sweepWallJittered, nWeights, sweepPipeR, sweepPhaseShift, ks, sigma_ref, voxelToUm, nom);
+
+      if (hom.degenerate) { discarded++; continue; }
+
+      validCount++;
+      results.push({
+        id: validCount,
+        scaleX: +finalScaleX.toFixed(3),
+        scaleY: +finalScaleY.toFixed(3),
+        scaleZ: +finalScaleZ.toFixed(3),
+        offset: +offset.toFixed(3),
+        nTerms: nOn,
+        nWeights: nWeights ? { wx: +nWeights.wx.toFixed(4), wy: +nWeights.wy.toFixed(4), wz: +nWeights.wz.toFixed(4) } : null,
+        pipe_radius: sweepPipeR,
+        phase_shift: sweepPhaseShift,
+        ...hom,
+        terms: terms.map(t => t.factors.map(f => f.trig[0]).join('')).join('|'),
+        termObjects: terms.map(t => ({...t, factors: t.factors.map(f => ({...f}))}))
+      });
+    }
+
+    // Progress: show whichever is further along — valid designs or attempt budget
+    const pctValid    = validCount / nSamples * 100;
+    const pctAttempts = attempts / MAX_ATTEMPTS * 100;
+    const pct = Math.min(99, Math.round(Math.max(pctValid, pctAttempts)));
+    progressFill.style.width = pct + '%';
+    progressPct.textContent = pct + '%';
+    const discardRate = attempts > 0 ? Math.round(discarded / attempts * 100) : 0;
+    progressLabel.textContent = `Valid: ${validCount} / ${nSamples} · discarded: ${discarded} (${discardRate}%)`;
+    await new Promise(r => setTimeout(r, 0));
+  }
+
+  // final progress
+  progressFill.style.width = '100%';
+  progressPct.textContent = '100%';
+
+  log('success', `${results.length} valid designs collected · ${discarded} degenerate discarded (${attempts} attempts)`);
+  const totalSampled = results.length;
+
+  if (totalSampled === 0) {
+    progressWrap.classList.remove('visible');
+    document.getElementById('logBadge').textContent = 'done';
+    btn.disabled = false;
+    btn.textContent = '▶ Run Sweep';
+    cancelBtn.style.display = 'none';
+    window._sweepCancelled = false;
+    return;
+  }
+
+  document.getElementById('statSampled').textContent = totalSampled;
+
+  const pctOf = (n) => `${Math.round(n / totalSampled * 100)}% of total`;
+
+  // Apply filters — capture count after each rank
+  let filtered = [...results];
+
+  filtered = applyRankFilter(filtered, 'r1metric', 1, null, 'sort');
+  log('info', `After Rank 1: ${filtered.length} designs`);
+  document.getElementById('statRank1').textContent = filtered.length;
+  document.getElementById('statRank1Pct').textContent = pctOf(filtered.length);
+
+  filtered = applyRankFilter(filtered, 'r2metric', 2, 'r2keep', 'keep');
+  log('info', `After Rank 2: ${filtered.length} designs`);
+  document.getElementById('statRank2').textContent = filtered.length;
+  document.getElementById('statRank2Pct').textContent = pctOf(filtered.length);
+
+  filtered = applyRankFilter(filtered, 'r3metric', 3, 'r3keep', 'keep');
+  log('success', `After Rank 3: ${filtered.length} designs passed all filters`);
+  document.getElementById('statRank3').textContent = filtered.length;
+  document.getElementById('statRank3Pct').textContent = pctOf(filtered.length);
+
+  // Peak values for rank filter cards
+  function setPeakCard(valId, labelId, subId, metricKey, dir, data) {
+    const label = METRIC_LABELS[metricKey] || metricKey;
+    const disabled = !metricKey || metricKey === 'none';
+    document.getElementById(labelId).textContent = disabled ? '—' : `Peak ${label}`;
+    if (disabled || data.length === 0) {
+      document.getElementById(valId).textContent = '—';
+      document.getElementById(subId).textContent = 'no filter chosen';
+      return;
+    }
+    const vals = data.map(d => typeof d[metricKey] === 'number' ? d[metricKey] : null).filter(v => v !== null);
+    if (vals.length === 0) { document.getElementById(valId).textContent = '—'; return; }
+    const peak = dir === 'min' ? Math.min(...vals) : Math.max(...vals);
+    const fmt = peak >= 1000 ? Math.round(peak).toString()
+               : peak >= 10  ? peak.toFixed(1)
+               : peak.toFixed(2);
+    const suffix = metricKey === 'volume_fraction' ? '%' : metricKey === 'anisotropy' ? '×' : '';
+    document.getElementById(valId).textContent = fmt + suffix;
+    document.getElementById(subId).textContent = dir === 'min' ? '▼ min' : '▲ max';
+  }
+
+  const r1key = document.getElementById('r1metric')?.value;
+  const r2key = document.getElementById('r2metric')?.value;
+  const r3key = document.getElementById('r3metric')?.value;
+  setPeakCard('statPeakR1','statPeakR1Label','statPeakR1Sub', r1key, directions[1]||'max', filtered);
+  setPeakCard('statPeakR2','statPeakR2Label','statPeakR2Sub', r2key, directions[2]||'max', filtered);
+  setPeakCard('statPeakR3','statPeakR3Label','statPeakR3Sub', r3key, directions[3]||'max', filtered);
+
+  // Store reference for rank mode switching, then apply final ranking
+  currentFiltered = filtered;
+  applyFinalRanking(filtered);
+
+  progressWrap.classList.remove('visible');
+  document.getElementById('logBadge').textContent = 'done';
+  btn.disabled = false;
+  btn.textContent = '▶ Run Sweep';
+  cancelBtn.style.display = 'none';
+  window._sweepCancelled = false;
+}
+
+// ─── Export Results ───────────────────────────────────────────────────────────
+// ─── Web Worker pool ─────────────────────────────────────────────────────────
+// One worker per logical CPU core minus one (keeps the UI thread responsive).
+// Workers load solver.js directly — no code serialization needed.
+var _workerCount = Math.max(1, (navigator.hardwareConcurrency || 4) - 1);
+var _workers = [];
+var _workerFree = [];       // indices of idle workers
+var _sweepActive = false;
+var _sweepValidCount = 0;
+var _sweepDiscarded = 0;
+var _sweepAttempts = 0;
+var _sweepTarget = 0;
+var _sweepMaxAttempts = 0;
+var _sweepSampleStore = {};  // id → { params, termObjects }
+var _sweepGenState = null;   // closure holding sweep parameters for generateSample()
+var _sweepBtn = null;
+var _sweepCancelBtn = null;
+var _sweepProgressWrap = null;
+var _sweepProgressFill = null;
+var _sweepProgressLabel = null;
+var _sweepProgressPct = null;
+
+function initWorkerPool() {
+  for (var i = 0; i < _workerCount; i++) {
+    (function(idx) {
+      var w = new Worker('solver.js');
+      w.onmessage = function(e) { onWorkerResult(e, idx); };
+      _workers.push(w);
+      _workerFree.push(idx);
+    })(i);
+  }
+  log('info', 'Worker pool ready — ' + _workerCount + ' threads');
+}
+
+function onWorkerResult(e, workerIdx) {
+  var d = e.data;
+  if (d.type !== 'result') return;
+
+  var sample = _sweepSampleStore[d.id];
+  delete _sweepSampleStore[d.id];
+  _workerFree.push(workerIdx);
+
+  if (!_sweepActive) return;
+
+  var result = d.result;
+  if (result && !result.degenerate) {
+    _sweepValidCount++;
+    var fullResult = {
+      id:         _sweepValidCount,
+      scaleX:     sample.params.scaleX,
+      scaleY:     sample.params.scaleY,
+      scaleZ:     sample.params.scaleZ,
+      offset:     sample.params.offset,
+      nTerms:     sample.params.nTerms,
+      nWeights:   sample.params.nWeights,
+      pipe_radius: sample.params.pipeR,
+      phase_shift: sample.params.phaseShift,
+      terms:      sample.termObjects.map(function(t) { return t.factors.map(function(f) { return f.trig[0]; }).join(''); }).join('|'),
+      termObjects: sample.termObjects
+    };
+    // Merge homogenization result fields
+    var keys = Object.keys(result);
+    for (var ki = 0; ki < keys.length; ki++) fullResult[keys[ki]] = result[keys[ki]];
+    results.push(fullResult);
+  } else {
+    _sweepDiscarded++;
+  }
+
+  updateSweepProgress();
+
+  if (_sweepValidCount >= _sweepTarget) {
+    finalizeSweep();
+    return;
+  }
+
+  if (_sweepAttempts < _sweepMaxAttempts) {
+    dispatchNextSample(workerIdx);
+  } else {
+    // No more attempts to dispatch — check if all workers are idle
+    var allIdle = true;
+    for (var key in _sweepSampleStore) { allIdle = false; break; }
+    if (allIdle) finalizeSweep();
+  }
+}
+
+function dispatchNextSample(workerIdx) {
+  _sweepAttempts++;
+  var sample = generateSample(_sweepAttempts, _sweepGenState);
+  if (!sample) {
+    // Pre-rejected (degenerate shift) — try next
+    _sweepDiscarded++;
+    if (_sweepAttempts < _sweepMaxAttempts) {
+      dispatchNextSample(workerIdx);
+    }
+    return;
+  }
+  _sweepSampleStore[_sweepAttempts] = { params: sample.params, termObjects: sample.termObjects };
+  _workers[workerIdx].postMessage({ type: 'solve', id: _sweepAttempts, ...sample.payload });
+}
+
+function updateSweepProgress() {
+  if (!_sweepProgressFill) return;
+  var pct = Math.min(99, Math.round(_sweepValidCount / _sweepTarget * 100));
+  _sweepProgressFill.style.width = pct + '%';
+  _sweepProgressPct.textContent = pct + '%';
+  var discardRate = _sweepAttempts > 0 ? Math.round(_sweepDiscarded / _sweepAttempts * 100) : 0;
+  _sweepProgressLabel.textContent = 'Valid: ' + _sweepValidCount + ' / ' + _sweepTarget + ' · discarded: ' + _sweepDiscarded + ' (' + discardRate + '%)';
+}
+
+function finalizeSweep() {
+  _sweepActive = false;
+
+  _sweepProgressFill.style.width = '100%';
+  _sweepProgressPct.textContent = '100%';
+  log('success', results.length + ' valid designs collected · ' + _sweepDiscarded + ' degenerate discarded (' + _sweepAttempts + ' attempts)');
+
+  if (results.length === 0) {
+    _sweepProgressWrap.classList.remove('visible');
+    document.getElementById('logBadge').textContent = 'done';
+    _sweepBtn.disabled = false;
+    _sweepBtn.textContent = '▶ Run Sweep';
+    _sweepCancelBtn.style.display = 'none';
+    return;
+  }
+
+  document.getElementById('statSampled').textContent = results.length;
+  var pctOf = function(n) { return Math.round(n / results.length * 100) + '% of total'; };
+
+  var filtered = results.slice();
+  filtered = applyRankFilter(filtered, 'r1metric', 1, null, 'sort');
+  log('info', 'After Rank 1: ' + filtered.length + ' designs');
+  document.getElementById('statRank1').textContent = filtered.length;
+  document.getElementById('statRank1Pct').textContent = pctOf(filtered.length);
+
+  filtered = applyRankFilter(filtered, 'r2metric', 2, 'r2keep', 'keep');
+  log('info', 'After Rank 2: ' + filtered.length + ' designs');
+  document.getElementById('statRank2').textContent = filtered.length;
+  document.getElementById('statRank2Pct').textContent = pctOf(filtered.length);
+
+  filtered = applyRankFilter(filtered, 'r3metric', 3, 'r3keep', 'keep');
+  log('success', 'After Rank 3: ' + filtered.length + ' designs passed all filters');
+  document.getElementById('statRank3').textContent = filtered.length;
+  document.getElementById('statRank3Pct').textContent = pctOf(filtered.length);
+
+  function setPeakCard(valId, labelId, subId, metricKey, dir, data) {
+    var label = METRIC_LABELS[metricKey] || metricKey;
+    var disabled = !metricKey || metricKey === 'none';
+    document.getElementById(labelId).textContent = disabled ? '—' : 'Peak ' + label;
+    if (disabled || data.length === 0) {
+      document.getElementById(valId).textContent = '—';
+      document.getElementById(subId).textContent = 'no filter chosen';
+      return;
+    }
+    var vals = data.map(function(d) { return typeof d[metricKey] === 'number' ? d[metricKey] : null; }).filter(function(v) { return v !== null; });
+    if (vals.length === 0) { document.getElementById(valId).textContent = '—'; return; }
+    var peak = dir === 'min' ? Math.min.apply(null, vals) : Math.max.apply(null, vals);
+    var fmt = peak >= 1000 ? Math.round(peak).toString() : peak >= 10 ? peak.toFixed(1) : peak.toFixed(2);
+    var suffix = metricKey === 'volume_fraction' ? '%' : metricKey === 'anisotropy' ? '×' : '';
+    document.getElementById(valId).textContent = fmt + suffix;
+    document.getElementById(subId).textContent = dir === 'min' ? '▼ min' : '▲ max';
+  }
+
+  var r1key = document.getElementById('r1metric')?.value;
+  var r2key = document.getElementById('r2metric')?.value;
+  var r3key = document.getElementById('r3metric')?.value;
+  setPeakCard('statPeakR1','statPeakR1Label','statPeakR1Sub', r1key, directions[1]||'max', filtered);
+  setPeakCard('statPeakR2','statPeakR2Label','statPeakR2Sub', r2key, directions[2]||'max', filtered);
+  setPeakCard('statPeakR3','statPeakR3Label','statPeakR3Sub', r3key, directions[3]||'max', filtered);
+
+  currentFiltered = filtered;
+  applyFinalRanking(filtered);
+
+  _sweepProgressWrap.classList.remove('visible');
+  document.getElementById('logBadge').textContent = 'done';
+  _sweepBtn.disabled = false;
+  _sweepBtn.textContent = '▶ Run Sweep';
+  _sweepCancelBtn.style.display = 'none';
+}
+
+// ─── Sample parameter generator ───────────────────────────────────────────────
+// Pure parameter generation — no solving. Returns { payload, params, termObjects }
+// or null if the sample is pre-rejected (degenerate shift).
+function generateSample(attemptId, g) {
+  var scaleX = g.xLo + Math.random() * (g.xHi - g.xLo);
+  var scaleY = g.yLo + Math.random() * (g.yHi - g.yLo);
+  var scaleZ = g.zLo + Math.random() * (g.zHi - g.zLo);
+  var finalScaleX = scaleX, finalScaleY = scaleY, finalScaleZ = scaleZ;
+
+  var terms, offset, sweepWallJittered, nWeights, sweepPipeR, sweepPhaseShift;
+  offset = 0; sweepWallJittered = g.sweepWall; nWeights = null; sweepPipeR = null; sweepPhaseShift = null;
+
+  if (g.sweepMode === 'pi-tpms') {
+    terms = g.baseTerms.map(function(t) {
+      return { ...t, on: true, factors: t.factors.map(function(f) { return { ...f }; }) };
+    });
+    finalScaleX = finalScaleY = finalScaleZ = g.nom;
+
+    var basePipeR = g.basePipeR;
+    sweepPipeR = +Math.max(0.02, Math.min(0.35, basePipeR * (0.6 + Math.random() * 0.8))).toFixed(3);
+
+    // NOTE: 1.0 excluded — full-period shift is identical to 0 for all TPMS surfaces
+    var EIGHTHS = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875];
+    var degenerateIndices = new Set();
+    degenerateIndices.add(0); // (0,0,0) always degenerate
+    if (g.surfName && PI_SHIFT_LIBRARY[g.surfName]) {
+      var degs = PI_SHIFT_LIBRARY[g.surfName].degenerate || [];
+      for (var di = 0; di < degs.length; di++) {
+        var d = degs[di];
+        var ix2 = EIGHTHS.indexOf(d[0]);
+        var iy2 = EIGHTHS.indexOf(d[1]);
+        var iz2 = EIGHTHS.indexOf(d[2]);
+        if (ix2 >= 0 && iy2 >= 0 && iz2 >= 0) degenerateIndices.add(ix2 * 64 + iy2 * 8 + iz2);
+      }
+    }
+
+    var ix, iy, iz;
+    var tries = 0;
+    do {
+      ix = Math.floor(Math.random() * 8);
+      iy = Math.floor(Math.random() * 8);
+      iz = Math.floor(Math.random() * 8);
+      tries++;
+    } while (degenerateIndices.has(ix * 64 + iy * 8 + iz) && tries < 100);
+
+    if (tries >= 100) return null; // couldn't find non-degenerate shift
+    sweepPhaseShift = { x: EIGHTHS[ix], y: EIGHTHS[iy], z: EIGHTHS[iz] };
+
+  } else if (g.sweepMode === 'shell') {
+    terms = g.baseTerms.map(function(t) {
+      return { ...t, on: true, factors: t.factors.map(function(f) { return { ...f }; }) };
+    });
+    offset = g.baseOffset;
+    var rx = 0.20 + Math.random() * 2.8;
+    var ry = 0.20 + Math.random() * 2.8;
+    var rz = 0.20 + Math.random() * 2.8;
+    var mean = (rx + ry + rz) / 3;
+    nWeights = { wx: rx/mean, wy: ry/mean, wz: rz/mean };
+  } else {
+    var TRIG_SWAP_PROB = 0.20;
+    var FREQ_JITTER    = 0.20;
+    terms = g.baseTerms.map(function(t) {
+      return {
+        ...t, on: true,
+        coef: +(0.05 + Math.random() * 4.95).toFixed(3),
+        factors: t.factors.map(function(f) {
+          var trig = f.trig;
+          if (Math.random() < TRIG_SWAP_PROB) trig = trig.startsWith('sin') ? trig.replace('sin','cos') : trig.replace('cos','sin');
+          var jitter = function(v) { return Math.max(0.5, Math.min(8, v * (1 + (Math.random()*2-1)*FREQ_JITTER))); };
+          return { trig: trig, fx: +jitter(f.fx).toFixed(2), fy: +jitter(f.fy).toFixed(2), fz: +jitter(f.fz).toFixed(2) };
+        })
+      };
+    });
+    offset = g.baseOffset + (Math.random() - 0.5) * 0.4;
+  }
+
+  var termObjects = terms.map(function(t) { return { ...t, factors: t.factors.map(function(f) { return { ...f }; }) }; });
+
+  return {
+    params: {
+      scaleX: +finalScaleX.toFixed(3),
+      scaleY: +finalScaleY.toFixed(3),
+      scaleZ: +finalScaleZ.toFixed(3),
+      offset: +offset.toFixed(3),
+      nTerms: terms.length,
+      nWeights: nWeights ? { wx: +nWeights.wx.toFixed(4), wy: +nWeights.wy.toFixed(4), wz: +nWeights.wz.toFixed(4) } : null,
+      pipeR: sweepPipeR,
+      phaseShift: sweepPhaseShift,
+    },
+    termObjects: termObjects,
+    payload: {
+      terms:         terms,
+      offset:        offset,
+      scaleX:        +finalScaleX.toFixed(3),
+      scaleY:        +finalScaleY.toFixed(3),
+      scaleZ:        +finalScaleZ.toFixed(3),
+      Es:            g.Es,
+      nu:            g.nu,
+      baseline:      g.baseline,
+      mode:          g.sweepMode,
+      wallThickness: sweepWallJittered,
+      nWeights:      nWeights,
+      pipeR:         sweepPipeR,
+      phaseShift:    sweepPhaseShift,
+      ks:            g.ks,
+      sigma_ref:     g.sigma_ref,
+      voxelToUm:     g.voxelToUm,
+      cellMult:      g.nom,
+      domain:        g.domain,
+    }
+  };
+}
+
+// ─── Sweep entry points ───────────────────────────────────────────────────────
+function cancelSweep() {
+  _sweepActive = false;
+  log('warn', 'Sweep cancelled at ' + _sweepValidCount + ' samples — showing results so far');
+  if (_sweepValidCount > 0) finalizeSweep();
+  else {
+    _sweepProgressWrap.classList.remove('visible');
+    document.getElementById('logBadge').textContent = 'idle';
+    _sweepBtn.disabled = false;
+    _sweepBtn.textContent = '▶ Run Sweep';
+    _sweepCancelBtn.style.display = 'none';
+  }
+}
+
+function runSweep() {
+  if (!baseRecipe) return;
+
+  _sweepBtn = document.getElementById('runBtn');
+  _sweepCancelBtn = document.getElementById('cancelBtn');
+  _sweepProgressWrap = document.getElementById('progressWrap');
+  _sweepProgressFill = document.getElementById('progressFill');
+  _sweepProgressLabel = document.getElementById('progressLabel');
+  _sweepProgressPct = document.getElementById('progressPct');
+
+  _sweepBtn.disabled = true;
+  _sweepBtn.textContent = '⏳ Running...';
+  _sweepCancelBtn.style.display = 'block';
+  results = [];
+  _sweepValidCount = 0;
+  _sweepDiscarded = 0;
+  _sweepAttempts = 0;
+  _sweepActive = true;
+  _sweepSampleStore = {};
+
+  var nSamples = parseInt(samplesSlider.value);
+  _sweepTarget = nSamples;
+  _sweepMaxAttempts = nSamples * 20;
+
+  var nom = baseRecipe.geometry.cell_scale || 1.0;
+  var mat = getSolverMaterial();
+  var domain = document.getElementById('domainSel')?.value || 'general';
+
+  var get = function(id) { return parseFloat(document.getElementById(id).value) || 0; };
+
+  // Build the generation state — everything generateSample needs
+  _sweepGenState = {
+    nom:        nom,
+    xLo:        nom * get('scaleXlo') / 100,
+    xHi:        nom * get('scaleXhi') / 100,
+    yLo:        nom * get('scaleYlo') / 100,
+    yHi:        nom * get('scaleYhi') / 100,
+    zLo:        nom * get('scaleZlo') / 100,
+    zHi:        nom * get('scaleZhi') / 100,
+    sweepMode:  baseRecipe.geometry?.mode || 'solid',
+    sweepWall:  baseRecipe.geometry?.wall_thickness || 0.3,
+    baseOffset: baseRecipe.geometry?.offset || 0,
+    basePipeR:  baseRecipe.geometry?.pipe_radius || 0.1,
+    surfName:   baseRecipe.surface?.preset || baseRecipe.meta?.preset || null,
+    baseTerms:  baseRecipe.surface.terms,
+    Es:         mat.Es,
+    nu:         mat.nu,
+    ks:         mat.ks,
+    sigma_ref:  getSigmaRef() ?? mat.Es * 0.0001,
+    voxelToUm:  getVoxelToUm(),
+    baseline:   { ...baseRecipe.homogenization, cell_scale: nom },
+    domain:     domain,
+  };
+
+  // Invalidate solver caches on all workers for fresh sweep
+  for (var i = 0; i < _workers.length; i++) {
+    _workers[i].postMessage({ type: 'invalidate' });
+  }
+
+  log('accent', 'Starting sweep: ' + nSamples + ' samples · ' + _workerCount + ' workers · N=64 (PI-TPMS) / N=16 (shell/solid)');
+  log('info', 'Domain: ' + domain + ' · Mode: ' + (_sweepGenState.sweepMode));
+
+  _sweepProgressWrap.classList.add('visible');
+  document.getElementById('logBadge').textContent = 'running';
+
+  // Seed all workers with their first job
+  var seedCount = Math.min(_workerCount, _sweepMaxAttempts);
+  for (var wi = 0; wi < seedCount; wi++) {
+    dispatchNextSample(_workerFree.pop());
+  }
+}
+
+
+  if (currentFiltered.length === 0) {
+    log('warn', 'Run a sweep first, then export results.');
+    return;
+  }
+
+  const payload = {
+    meta: {
+      exported: new Date().toISOString(),
+      preset:   baseRecipe.meta?.preset || 'unknown',
+      version:  baseRecipe.meta?.version || '?',
+      count:    currentFiltered.length
+    },
+    base: {
+      E_solid_GPa:    baseRecipe.homogenization?.E_solid_GPa || 100,
+      poisson:        baseRecipe.homogenization?.poisson || 0.3,
+      mode:           baseRecipe.geometry?.mode || 'shell',
+      wall_thickness: baseRecipe.geometry?.wall_thickness || 0.3,
+      offset:         baseRecipe.geometry?.offset || 0.0,
+      cell_scale:     baseRecipe.geometry?.cell_scale || 1.0
+    },
+    designs: currentFiltered.map(d => ({
+      id:             d.id,
+      filterRank:     d.filterRank,
+      // Browser FFT-CG estimates (N=16³)
+      browser: {
+        Ex_GPa:            d.Ex_GPa,
+        Ey_GPa:            d.Ey_GPa,
+        Ez_GPa:            d.Ez_GPa,
+        anisotropy:        d.anisotropy,
+        volume_fraction:   d.volume_fraction,
+        stiffness_density: d.stiffness_density,
+        aniso_efficiency:  d.aniso_efficiency,
+        axial_dominance:   d.axial_dominance,
+        ortho_contrast:    d.ortho_contrast
+      },
+      // Full design definition for batch_validate.py
+      design: {
+        meta: baseRecipe.meta,
+        surface: { type: 'terms', terms: d.termObjects },
+        geometry: {
+          ...baseRecipe.geometry,
+          offset:          d.offset,
+          normal_weights:  d.nWeights || null
+        },
+        homogenization: baseRecipe.homogenization
+      }
+    }))
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const ts   = new Date().toISOString().slice(0,16).replace('T','_').replace(':','');
+  a.href     = url;
+  a.download = `sweep_results_${ts}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  log('success', `Exported ${currentFiltered.length} designs → ${a.download}`);
+  log('info', 'Run batch_validate.py on this file to get GPU-validated stiffness values');
+}
+
+function applyRankFilter(data, metricId, rank, valId, mode) {
+  const metric = document.getElementById(metricId)?.value;
+  if (!metric || metric === 'none') return data;
+
+  const dir = directions[rank] || 'max';
+  const valEl = valId ? document.getElementById(valId) : null;
+  const val = valEl?.value ? parseFloat(valEl.value) : null;
+
+  let out = [...data];
+
+  if (mode === 'threshold' && val !== null) {
+    out = out.filter(d => dir === 'max' ? d[metric] >= val : d[metric] <= val);
+  }
+
+  out.sort((a, b) => dir === 'max' ? b[metric] - a[metric] : a[metric] - b[metric]);
+
+  if (mode === 'keep') {
+    const defaultPct = rank === 2 ? 50 : 25;
+    const pct = (val !== null && val > 0) ? val : defaultPct;
+    const keepN = Math.max(1, Math.round(out.length * pct / 100));
+    out = out.slice(0, keepN);
+  }
+
+  return out;
+}
+
+// ─── Table ────────────────────────────────────────────────────────────────────
+const COLUMNS = [
+  { label: '#',      key: null },
+  { label: 'α',      key: 'anisotropy' },
+  { label: 'Ex',     key: 'Ex_GPa',             cls: 'td-group-start' },
+  { label: 'Ey',     key: 'Ey_GPa',             cls: 'td-group-mid' },
+  { label: 'Ez',     key: 'Ez_GPa',             cls: 'td-group-end' },
+  { label: 'E/ρ',    key: 'stiffness_density' },
+  { label: 'α/ρ',    key: 'aniso_efficiency' },
+  { label: 'Ξ',      key: 'axial_dominance' },
+  { label: 'Ω',      key: 'ortho_contrast' },
+  { label: 'λ',      key: 'load_path_eff' },
+  { label: 'ax',     key: 'stiff_axis' },
+  { label: 'κ',      key: 'connect_idx' },
+  { label: 'kx',     key: 'keff_x',             cls: 'td-group-start' },
+  { label: 'ky',     key: 'keff_y',             cls: 'td-group-mid' },
+  { label: 'kz',     key: 'keff_z',             cls: 'td-group-end' },
+  { label: 'kα',     key: 'thermal_anisotropy' },
+  { label: 'k/ρ',    key: 'k_density' },
+  { label: 'U',      key: 'U_strain',           cls: 'td-group-start' },
+  { label: 'με·X',   key: 'microstrain_x',      cls: 'td-group-mid' },
+  { label: 'με·Y',   key: 'microstrain_y',      cls: 'td-group-mid' },
+  { label: 'με·Z',   key: 'microstrain_z',      cls: 'td-group-end' },
+  { label: 'με̄',    key: 'microstrain_avg' },
+  { label: 'φ',      key: 'pore_size',          cls: 'td-group-start' },
+  { label: 'φt',     key: 'throat_size',        cls: 'td-group-mid' },
+  { label: 'perc',   key: 'perc_idx' },
+  { label: 'ρ%',     key: 'volume_fraction' },
+];
+
+function renderTable(data) {
+  currentFiltered = data;
+  document.getElementById('resultsBadge').textContent = `${data.length} designs`;
+  const wrap = document.getElementById('tableWrap');
+
+  if (data.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⬡</div><div class="empty-title">No designs passed all filters</div><div class="empty-sub">Try relaxing your filter thresholds</div></div>`;
+    return;
+  }
+
+  let sorted = [...data];
+  if (sortState.col) {
+    sorted.sort((a, b) => {
+      const av = a[sortState.col], bv = b[sortState.col];
+      if (typeof av === 'string') return sortState.dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortState.dir === 'asc' ? av - bv : bv - av;
+    });
+  }
+
+  const allKeys = COLUMNS.filter(c => c.key).map(c => c.key);
+  const maxes = Object.fromEntries(allKeys.map(k => [k, Math.max(...sorted.map(d => typeof d[k]==='number' ? d[k] : 0))]));
+  const mines = Object.fromEntries(allKeys.map(k => [k, Math.min(...sorted.map(d => typeof d[k]==='number' ? d[k] : 0))]));
+
+  // Per-key formatting rules
+  const FMT = {
+    anisotropy: v => v.toFixed(2),
+    Ex_GPa: v => v.toFixed(2), Ey_GPa: v => v.toFixed(2), Ez_GPa: v => v.toFixed(2),
+    stiffness_density: v => v.toFixed(2), aniso_efficiency: v => v.toFixed(2),
+    axial_dominance: v => v.toFixed(2), ortho_contrast: v => v.toFixed(3),
+    load_path_eff: v => v.toFixed(3), connect_idx: v => v.toFixed(2),
+    keff_x: v => v.toFixed(3), keff_y: v => v.toFixed(3), keff_z: v => v.toFixed(3),
+    thermal_anisotropy: v => v.toFixed(2), k_density: v => v.toFixed(3),
+    U_strain: v => v.toFixed(1),
+    microstrain_x: v => Math.round(v).toString(),
+    microstrain_y: v => Math.round(v).toString(),
+    microstrain_z: v => Math.round(v).toString(),
+    microstrain_avg: v => Math.round(v).toString(),
+    pore_size:   v => Math.round(v).toString(),
+    throat_size: v => Math.round(v).toString(),
+    perc_idx:    v => v.toFixed(2),
+    surface_complexity: v => v.toFixed(3), volume_fraction: v => v.toFixed(1),
+  };
+  const COL_COLORS = {
+    anisotropy:'var(--rank1)', Ex_GPa:'#22d3ee', Ey_GPa:'#e879f9', Ez_GPa:'#facc15',
+    stiffness_density:'var(--accent3)', aniso_efficiency:'var(--rank1)',
+    axial_dominance:'var(--accent2)', ortho_contrast:'var(--warn)',
+    load_path_eff:'var(--success)', connect_idx:'var(--accent2)',
+    keff_x:'#22d3ee', keff_y:'#e879f9', keff_z:'#facc15',
+    thermal_anisotropy:'var(--accent3)', k_density:'var(--success)',
+    U_strain:'var(--warn)', microstrain_x:'#22d3ee', microstrain_y:'#e879f9', microstrain_z:'#facc15',
+    microstrain_avg:'var(--rank1)',
+    pore_size:'var(--success)', throat_size:'var(--accent2)',    perc_idx:'var(--rank1)',
+    volume_fraction:'var(--warn)', surface_complexity:'var(--muted)',
+  };
+
+  // Color-intensity cell: bright = high value, dim = low value
+  const cell = (val, key, suffix = '') => {
+    const color = COL_COLORS[key] || 'var(--text)';
+    const range = (maxes[key] - mines[key]) || 1;
+    const t = (typeof val === 'number' ? val - mines[key] : 0) / range;
+    const alpha = 0.35 + t * 0.65;
+    const display = typeof val === 'number' ? val : val;
+    return `<span style="color:${color};opacity:${alpha.toFixed(2)};font-variant-numeric:tabular-nums">${display}${suffix}</span>`;
+  };
+
+  const visibleCols = COLUMNS.filter(c => !c.key || activeDomainShow.includes(c.key));
+
+  const rows = sorted.slice(0, 200).map((d) => {
+    const fr = d.filterRank || 999;
+    const badge = fr <= 3
+      ? `<div class="rank-badge r${fr}">${fr}</div>`
+      : `<span style="color:var(--muted);font-family:'Azeret Mono',monospace;font-size:11px">${fr}</span>`;
+
+    const tds = visibleCols.map(col => {
+      if (!col.key) return `<td style="width:32px;text-align:center">${badge}</td>`;
+      const cls = col.cls ? ` class="${col.cls}"` : '';
+      const v = d[col.key];
+      // Special case: stiff_axis is categorical
+      if (col.key === 'stiff_axis') {
+        const axisColor = v === 'X' ? '#22d3ee' : v === 'Y' ? '#e879f9' : '#facc15';
+        return `<td${cls}><span style="color:${axisColor};font-weight:600;font-family:'Azeret Mono',monospace">${v||'?'}</span></td>`;
+      }
+      // Special case: microstrain_avg — Frost mechanostat zone pill badges
+      // Background color makes it visually distinct from neighboring colored columns
+      if (col.key === 'microstrain_avg') {
+        const με = typeof v === 'number' ? v : 0;
+        const [bgColor, textColor, zone] =
+            με < 200   ? ['#2d3748','#a0aec0','disuse']
+          : με < 1500  ? ['#2d2a1a','#d69e2e','sub-thresh']
+          : με <= 3000 ? ['#1a2e1a','#68d391','osteogenic']
+          :              ['#2d1a0a','#ed8936','overload'];
+        const fmt = Math.round(με).toLocaleString();
+        return `<td${cls}><span style="background:${bgColor};color:${textColor};font-weight:600;font-family:'Azeret Mono',monospace;font-variant-numeric:tabular-nums;font-size:10px;padding:1px 5px;border-radius:4px;white-space:nowrap" title="Frost (1987): ${zone} · <200 disuse · 200–1500 sub-threshold · 1500–3000 osteogenic ✓ · >3000 overload">${fmt}</span></td>`;
+      }
+      const fmt = FMT[col.key] ? FMT[col.key](typeof v === 'number' ? v : 0) : (typeof v === 'number' ? v.toFixed(2) : (v ?? '—'));
+      const suffix = col.key === 'volume_fraction' ? '%' : col.key === 'anisotropy' ? '×' : '';
+      return `<td${cls}>${cell(typeof v === 'number' ? v : 0, col.key, suffix)}</td>`;
+    }).join('');
+
+    return `<tr data-design-id="${d.id}" style="cursor:pointer">${tds}</tr>`;
+  }).join('');
+
+  const headers = visibleCols.map((col) => {
+    if (!col.key) return `<th style="width:32px;text-align:center">${col.label}</th>`;
+    const isActive = sortState.col === col.key;
+    const cls = [
+      isActive ? (sortState.dir === 'asc' ? 'sort-asc' : 'sort-desc') : '',
+      col.cls || ''
+    ].join(' ').trim();
+    const arrow = isActive ? (sortState.dir === 'asc' ? '↑' : '↓') : '↕';
+    return `<th class="${cls}" data-col="${col.key}" onclick="sortBy('${col.key}')">
+      ${col.label}<span class="sort-indicator">${arrow}</span>
+    </th>`;
+  }).join('');
+
+  wrap.innerHTML = `<table>
+    <thead><tr>${headers}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function sortBy(col) {
+  if (sortState.col === col) {
+    sortState.dir = sortState.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    sortState.col = col;
+    sortState.dir = 'desc';
+  }
+  renderTable(currentFiltered);
+}
+
+
+// ─── WebGL Preview Renderer ───────────────────────────────────────────────────
+const previewCanvas = document.getElementById('previewCanvas');
+const gl = previewCanvas.getContext('webgl');
+let previewProg = null, previewQuadBuf = null;
+let previewRot = [1,0,0,0,1,0,0,0,1];
+let previewAnimId = null;
+let previewActive = false;
+let previewCellScale = 1.0;
+
+// Init rotation to a nice angle
+function mat3Mul(A,B){const r=new Array(9);for(let c=0;c<3;c++)for(let row=0;row<3;row++)r[c*3+row]=A[0*3+row]*B[c*3+0]+A[1*3+row]*B[c*3+1]+A[2*3+row]*B[c*3+2];return r;}
+function rotAxisAngle(ax,ay,az,angle){const c=Math.cos(angle),s=Math.sin(angle),t2=1-c;const l=Math.sqrt(ax*ax+ay*ay+az*az)||1;ax/=l;ay/=l;az/=l;return[t2*ax*ax+c,t2*ax*ay+s*az,t2*ax*az-s*ay,t2*ax*ay-s*az,t2*ay*ay+c,t2*ay*az+s*ax,t2*ax*az+s*ay,t2*ay*az-s*ax,t2*az*az+c];}
+// Isometric view: 45° around Y, then 35.26° tilt (true isometric angles)
+previewRot = mat3Mul(rotAxisAngle(0,1,0, Math.PI/4), rotAxisAngle(1,0,0, Math.atan(1/Math.sqrt(2))));
+
+function toFloat(v){const s=parseFloat(parseFloat(v).toFixed(6)).toString();return s.includes('.')?s:s+'.0';}
+
+function glslTrig(t,fx,fy,fz){
+  if(t==='sin(x)')return'sin('+fx+'*gx)';if(t==='cos(x)')return'cos('+fx+'*gx)';
+  if(t==='sin(y)')return'sin('+fy+'*gy)';if(t==='cos(y)')return'cos('+fy+'*gy)';
+  if(t==='sin(z)')return'sin('+fz+'*gz)';if(t==='cos(z)')return'cos('+fz+'*gz)';
+  return'1.0';
+}
+
+// buildFrag — unified SDF renderer supporting solid, shell, and PI-TPMS modes
+// mode: 'solid' | 'shell' | 'pi-tpms'
+function buildFrag(terms, mode, offsetVal, wallVal, cellMult, pipeR, phaseShift, nWeights) {
+  const active = terms.filter(t => t.on && t.factors && t.factors.length);
+  const lines = active.map(t => {
+    const parts = t.factors.map(f => '(' + glslTrig(f.trig, toFloat(f.fx), toFloat(f.fy), toFloat(f.fz)) + ')');
+    return '  v+=' + toFloat(t.coef) + '*' + parts.join('*') + ';';
+  }).join('\n');
+
+  const H = toFloat(Math.PI * cellMult);
+  const isPi = mode === 'pi-tpms';
+  const isShell = mode === 'shell';
+
+  let fieldFuncs, implicitExpr, featureSizeVal;
+
+  if (isPi) {
+    // PI-TPMS: two separate helper functions to avoid gx/gy/gz redeclaration
+    const TWO_PI = 2 * Math.PI;
+    const dxS = toFloat((phaseShift?.x || 0) * TWO_PI);
+    const dyS = toFloat((phaseShift?.y || 0) * TWO_PI);
+    const dzS = toFloat((phaseShift?.z || 0) * TWO_PI);
+    const pipeRS = toFloat(pipeR || 0.1);
+
+    fieldFuncs =
+      'float evalA(vec3 p,float H){float v=0.0;float gx=p.x,gy=p.y,gz=p.z;' + lines + ' return v;}' +
+      'float evalB(vec3 p,float H){float v=0.0;float gx=p.x+' + dxS + ',gy=p.y+' + dyS + ',gz=p.z+' + dzS + ';' + lines + ' return v;}';
+    implicitExpr = 'max(abs(evalA(p,H)),abs(evalB(p,H)))-' + pipeRS;
+    featureSizeVal = toFloat(pipeR || 0.1);
+  } else {
+    const offS = toFloat(offsetVal);
+    const wallS = toFloat(wallVal);
+    
+    // Shell with directional thickness: use normal-weighted distance
+    if (isShell && nWeights) {
+      const wxS = toFloat(nWeights.wx || 1.0);
+      const wyS = toFloat(nWeights.wy || 1.0);
+      const wzS = toFloat(nWeights.wz || 1.0);
+      
+      fieldFuncs = [
+        'float base(vec3 p,float H){float v=0.0;float gx=p.x,gy=p.y,gz=p.z;',
+        lines,
+        'return v;}',
+        // Compute gradient (normal) for directional thickness
+        'vec3 grad(vec3 p,float H,float e){',
+        '  float dx=base(p+vec3(e,0,0),H)-base(p-vec3(e,0,0),H);',
+        '  float dy=base(p+vec3(0,e,0),H)-base(p-vec3(0,e,0),H);',
+        '  float dz=base(p+vec3(0,0,e),H)-base(p-vec3(0,0,e),H);',
+        '  return normalize(vec3(dx,dy,dz));',
+        '}',
+        'float dirWall(vec3 p,float H){',
+        '  vec3 n=grad(p,H,0.01);',
+        '  float wDir=abs(n.x)*' + wxS + '+abs(n.y)*' + wyS + '+abs(n.z)*' + wzS + ';',
+        '  return ' + wallS + '*wDir/1.5;', // Normalize by ~average
+        '}'
+      ].join('\n');
+      
+      implicitExpr = 'abs(base(p,H)-(' + offS + '))-dirWall(p,H)';
+      featureSizeVal = wallS;
+    } else {
+      // Standard shell or solid mode
+      fieldFuncs = 'float base(vec3 p,float H){float v=0.0;float gx=p.x,gy=p.y,gz=p.z;\n' + lines + '\nreturn v;}';
+      implicitExpr = isShell ? 'abs(base(p,H)-(' + offS + '))-' + wallS : 'base(p,H)-(' + offS + ')';
+      featureSizeVal = isShell ? wallS : toFloat(Math.PI * cellMult * 0.25);
+    }
+  }
+
+  return [
+    'precision highp float;',
+    'uniform vec2 res;uniform mat3 rot;uniform float zoom;',
+    fieldFuncs,
+    'float implicit(vec3 p,float H){return ' + implicitExpr + ';}',
+    // Box SDF — intersection clips geometry to solid cube
+    'float boxSDF(vec3 p,float H){vec3 d=abs(p)-H;return length(max(d,0.0))+min(max(d.x,max(d.y,d.z)),0.0);}',
+    'float sceneSDF(vec3 p,float H){return max(implicit(p,H),boxSDF(p,H));}',
+    // Normal FD step scales with featureSize for sharpness across all modes
+    'vec3 nrm(vec3 p,float H,float e){return normalize(vec3(sceneSDF(p+vec3(e,0,0),H)-sceneSDF(p-vec3(e,0,0),H),sceneSDF(p+vec3(0,e,0),H)-sceneSDF(p-vec3(0,e,0),H),sceneSDF(p+vec3(0,0,e),H)-sceneSDF(p-vec3(0,0,e),H)));}',
+    'vec3 palette(float t){vec3 a=vec3(0.5,0.5,0.5),b=vec3(0.5,0.5,0.5),c=vec3(1.0,1.0,1.0),d=vec3(0.0,0.33,0.67);return a+b*cos(6.28318*(c*t+d));}',
+    'void main(){',
+    '  vec2 uv=(gl_FragCoord.xy-res*0.5)/min(res.x,res.y);',
+    '  vec3 ro=rot*vec3(0.0,0.0,zoom);',
+    '  vec3 rd=normalize(rot*vec3(uv.x,uv.y,-1.6));',
+    '  float H=' + H + ';',
+    '  float r=clamp(length(uv)*1.1,0.0,1.0);',
+    '  vec3 bgCentre=vec3(0.07,0.09,0.22);vec3 bgEdge=vec3(0.01,0.01,0.04);',
+    '  vec3 bgCol=mix(bgCentre,bgEdge,r*r);vec4 bg=vec4(bgCol,1.0);',
+    // featureSize baked as constant — drives thresh, maxStep, normal e
+    '  float featureSize=' + featureSizeVal + ';',
+    '  float camScale=clamp(zoom/' + toFloat(Math.PI * cellMult * 5.1) + ',0.15,1.0);',
+    '  float thresh=featureSize*0.008*camScale;',
+    '  float maxStep=featureSize*0.25*camScale;',
+    '  float nrmE=featureSize*0.06*camScale;',
+    // SDF marcher with box entry/exit
+    '  vec3 iv=vec3(1.0)/rd;',
+    '  vec3 tb=(-vec3(H,H,H)-ro)*iv,tt=(vec3(H,H,H)-ro)*iv;',
+    '  vec3 tmi=min(tb,tt),tma=max(tb,tt);',
+    '  float tEn=max(max(tmi.x,tmi.y),tmi.z);float tEx=min(min(tma.x,tma.y),tma.z);',
+    '  if(tEn>tEx||tEx<0.0){gl_FragColor=bg;return;}',
+    '  float t=max(tEn,0.001);bool hit=false;',
+    '  for(int i=0;i<512;i++){',
+    '    vec3 p=ro+rd*t;float d=sceneSDF(p,H);',
+    '    if(d<thresh){hit=true;break;}',
+    '    if(t>tEx+0.01)break;',
+    '    t+=clamp(d*0.85,thresh*0.5,maxStep);',
+    '  }',
+    '  if(!hit){',
+    '    if(tEn>=0.0){',
+    '      vec3 pc=ro+rd*tEn,ep=abs(pc)/H;',
+    '      vec2 fp;if(ep.x>ep.y&&ep.x>ep.z)fp=ep.yz;else if(ep.y>ep.z)fp=ep.xz;else fp=ep.xy;',
+    '      float ed=min(1.0-fp.x,1.0-fp.y);',
+    '      if(ed<0.04){float w=smoothstep(0.04,0.005,ed);gl_FragColor=mix(bg,vec4(0.4,0.6,1.0,1.0),w*0.65);return;}',
+    '    }',
+    '    gl_FragColor=bg;return;',
+    '  }',
+    '  vec3 pos=ro+rd*t,n=nrm(pos,H,nrmE);',
+    '  if(dot(n,-rd)<0.0)n=-n;',
+    '  float dy=dot(n,vec3(0.0,1.0,0.0)),dz=dot(n,vec3(0.0,0.0,1.0));',
+    '  float hue=dy*dy*0.33+dz*dz*0.67;',
+    '  vec3 iridBase=palette(hue);vec3 iridShift=palette(hue+0.5);',
+    '  vec3 l1=normalize(vec3(1.0,1.8,2.0)),l2=normalize(vec3(-0.8,-0.3,0.6));',
+    '  float l3fill=max(dot(n,normalize(vec3(-0.5,-1.0,-1.5))),0.0)*0.3;',
+    '  float diff=0.35+max(dot(n,l1),0.0)*0.7+max(dot(n,l2),0.0)*0.25+l3fill;',
+    '  float spec1=pow(max(dot(reflect(-l1,n),-rd),0.0),120.0)*1.5;',
+    '  float spec2=pow(max(dot(reflect(-l1,n),-rd),0.0),20.0)*0.4;',
+    '  float rim=pow(1.0-max(dot(n,-rd),0.0),2.5)*0.8;',
+    '  vec3 col=iridBase*diff+vec3(1.0,0.98,0.95)*spec1+iridShift*spec2+iridShift*rim*0.6;',
+    '  col=mix(bgCol,col,exp(-t*0.010));',
+    '  gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);',
+    '}'
+  ].join('\n');
+}
+
+function mkShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+const VERT = 'attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}';
+
+function buildPreviewShader(terms, offset, cellScale, mode, wallThickness, pipeR, phaseShift, nWeights) {
+  if (!gl) return;
+  const frag = buildFrag(terms, mode || 'solid', offset, wallThickness || 0.3, cellScale, pipeR, phaseShift, nWeights);
+  const p = gl.createProgram();
+  gl.attachShader(p, mkShader(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(p, mkShader(gl.FRAGMENT_SHADER, frag));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(p)); return; }
+  if (previewProg) gl.deleteProgram(previewProg);
+  previewProg = p;
+  gl.useProgram(previewProg);
+  if (!previewQuadBuf) {
+    previewQuadBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, previewQuadBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+  } else {
+    gl.bindBuffer(gl.ARRAY_BUFFER, previewQuadBuf);
+  }
+  const loc = gl.getAttribLocation(previewProg, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+}
+
+function resizePreview() {
+  const rect = previewCanvas.parentElement.getBoundingClientRect();
+  previewCanvas.width = rect.width;
+  previewCanvas.height = rect.height || 220;
+  if (gl) gl.viewport(0, 0, previewCanvas.width, previewCanvas.height);
+}
+
+function renderPreviewFrame() {
+  if (!gl || !previewProg || !previewActive) return;
+  // Lissajous tumble: Y and X at irrational ratio so it never repeats
+  // Y spins at base speed, X nods at φ⁻¹ × base (golden ratio — maximally non-repeating)
+  const wy = 0.003;
+  const wx = wy / 1.6180339887; // golden ratio denominator
+  previewRot = mat3Mul(rotAxisAngle(0,1,0, wy), previewRot);
+  previewRot = mat3Mul(rotAxisAngle(1,0,0, wx), previewRot);
+  gl.useProgram(previewProg);
+  const uRes = gl.getUniformLocation(previewProg, 'res');
+  const uRot = gl.getUniformLocation(previewProg, 'rot');
+  const uZoom = gl.getUniformLocation(previewProg, 'zoom');
+  gl.uniform2f(uRes, previewCanvas.width, previewCanvas.height);
+  gl.uniformMatrix3fv(uRot, false, previewRot);
+  gl.uniform1f(uZoom, Math.PI * previewCellScale * 5.1);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  previewAnimId = requestAnimationFrame(renderPreviewFrame);
+}
+
+function showPreview(design) {
+  if (!gl) return;
+  resizePreview();
+  const terms = design.termObjects;
+  const geom = baseRecipe?.geometry || {};
+  const mode = geom.mode || 'solid';
+  
+  // Shell mode: use swept nWeights if available, otherwise base wallThickness
+  const wallThickness = design.nWeights 
+    ? null  // Signal to use directional weights
+    : (geom.wall_thickness || 0.3);
+  const nWeights = design.nWeights || null;
+  
+  // Use design-specific PI-TPMS parameters if available, otherwise fall back to baseRecipe
+  const pipeR = design.pipe_radius !== undefined ? design.pipe_radius : (geom.pipe_radius || 0.1);
+  const phaseShift = design.phase_shift !== undefined ? design.phase_shift : (geom.phase_shift || { x: 0.25, y: 0.25, z: 0 });
+  
+  buildPreviewShader(terms, design.offset, (design.scaleX + design.scaleY + design.scaleZ) / 3, mode, wallThickness, pipeR, phaseShift, nWeights);
+  previewCellScale = (design.scaleX + design.scaleY + design.scaleZ) / 3;
+  previewActive = true;
+  if (previewAnimId) cancelAnimationFrame(previewAnimId);
+  previewCanvas.classList.add('visible');
+  document.getElementById('previewEmpty').classList.add('hidden');
+  const info = document.getElementById('previewInfo');
+  
+  // Show mode-specific parameters in preview info
+  if (mode === 'pi-tpms' && design.pipe_radius !== undefined && design.phase_shift !== undefined) {
+    const shift = design.phase_shift;
+    info.textContent = `pipeR ${pipeR.toFixed(3)} · shift (${shift.x},${shift.y},${shift.z}) · aniso ${design.anisotropy.toFixed(2)}×`;
+  } else if (mode === 'shell' && design.nWeights) {
+    const w = design.nWeights;
+    info.textContent = `wall (${w.wx.toFixed(2)},${w.wy.toFixed(2)},${w.wz.toFixed(2)}) · aniso ${design.anisotropy.toFixed(2)}×`;
+  } else {
+    info.textContent = `Sx ${design.scaleX} · Sy ${design.scaleY} · Sz ${design.scaleZ} · aniso ${design.anisotropy.toFixed(2)}×`;
+  }
+  
+  info.classList.add('visible');
+  document.getElementById('previewBadge').textContent = `design #${design.id}`;
+  renderPreviewFrame();
+}
+
+function hidePreview() {
+  // keep last surface showing — don't clear on mouse leave
+}
+
+// Wire hover to table rows — delegated on tableWrap
+document.getElementById('tableWrap').addEventListener('mouseover', e => {
+  const row = e.target.closest('tr');
+  if (!row || !row.dataset.designId) return;
+  const id = parseInt(row.dataset.designId);
+  const design = currentFiltered.find(d => d.id === id);
+  if (design && design.termObjects) showPreview(design);
+});
+
+// ─── Row click → select for export ───────────────────────────────────────────
+let selectedDesign = null;
+
+document.getElementById('tableWrap').addEventListener('click', e => {
+  const row = e.target.closest('tr');
+  if (!row || !row.dataset.designId) return;
+  const id = parseInt(row.dataset.designId);
+  const design = currentFiltered.find(d => d.id === id);
+  if (!design) return;
+
+  // deselect previous
+  document.querySelectorAll('tr.selected-row').forEach(r => r.classList.remove('selected-row'));
+  row.classList.add('selected-row');
+  selectedDesign = design;
+
+  const btn = document.getElementById('exportDesignBtn');
+  btn.disabled = false;
+  btn.style.color = 'var(--accent)';
+  btn.style.borderColor = 'rgba(0,229,192,0.4)';
+  btn.style.cursor = 'pointer';
+  document.getElementById('selectedLabel').textContent = `design #${design.id} selected`;
+  document.getElementById('selectedLabel').style.color = 'var(--accent)';
+});
+
+function exportSelectedDesign() {
+  if (!selectedDesign || !baseRecipe) return;
+
+  // Build a tpms-builder compatible JSON from the selected design
+  const d = selectedDesign;
+  const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  const preset = baseRecipe.meta?.preset || 'custom';
+
+  const exportData = {
+    meta: {
+      version: baseRecipe.meta?.version || '0.4.0',
+      timestamp: new Date().toISOString(),
+      preset: `${preset}_sweep_${d.id}`,
+      source: 'tpms-pipeline sweep',
+      sweep_rank: d.id
+    },
+    surface: {
+      type: 'terms',
+      preset: preset,
+      terms: d.termObjects
+    },
+    geometry: {
+      offset: d.offset,
+      cell_scale: +((d.scaleX + d.scaleY + d.scaleZ) / 3).toFixed(3),
+      cell_scale_x: d.scaleX,
+      cell_scale_y: d.scaleY,
+      cell_scale_z: d.scaleZ,
+      mode: baseRecipe.geometry?.mode || 'solid',
+      wall_thickness: baseRecipe.geometry?.wall_thickness || null,
+      normal_weights: d.nWeights || null,
+      gradient: baseRecipe.geometry?.gradient || { enabled: false }
+    },
+    homogenization: {
+      grid: baseRecipe.homogenization?.grid || 48,
+      E_solid_GPa: baseRecipe.homogenization?.E_solid_GPa || 100,
+      poisson: baseRecipe.homogenization?.poisson || 0.3,
+      volume_fraction: d.volume_fraction,
+      Ex_GPa: d.Ex_GPa,
+      Ey_GPa: d.Ey_GPa,
+      Ez_GPa: d.Ez_GPa,
+      anisotropy: d.anisotropy,
+      stiffness_density: d.stiffness_density,
+      aniso_efficiency: d.aniso_efficiency,
+      axial_dominance: d.axial_dominance,
+      ortho_contrast: d.ortho_contrast,
+      method: 'pipeline-sweep-estimate'
+    }
+  };
+
+  const json = JSON.stringify(exportData, null, 2);
+  const filename = `tpms_${preset}_sweep${d.id}_${ts}.json`;
+
+  // Attempt file download
+  try {
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    log('success', `Downloaded: ${filename}`);
+  } catch(e) {
+    log('warn', `Download blocked in this context — copying to clipboard instead`);
+  }
+
+  // Always copy to clipboard as well — useful when running outside Docker
+  navigator.clipboard.writeText(json).then(() => {
+    log('success', `JSON copied to clipboard — paste into a .json file`);
+  }).catch(() => {
+    // Last resort: dump to log so user can copy manually
+    log('info', `Clipboard unavailable. JSON output:`);
+    log('info', json);
+  });
+
+  log('info', `Scale ${d.scaleX}·${d.scaleY}·${d.scaleZ} · aniso ${d.anisotropy.toFixed(2)}× · vol ${d.volume_fraction}%`);
+
+  // Flash confirmation
+  const btn = document.getElementById('exportDesignBtn');
+  const orig = btn.textContent;
+  btn.textContent = '✓ Downloaded';
+  btn.style.color = 'var(--success)';
+  btn.style.borderColor = 'var(--success)';
+  setTimeout(() => {
+    btn.textContent = orig;
+    btn.style.color = 'var(--accent)';
+    btn.style.borderColor = 'rgba(0,229,192,0.4)';
+  }, 2000);
+}
+
+
+// ─── 3D Scatter Plot ──────────────────────────────────────────────────────────
+const plotCanvas = document.getElementById('plotCanvas');
+const pctx = plotCanvas.getContext('2d');
+let plotData = [];
+let plotRot = { x: 0.45, y: 0.6 };
+let plotDrag = false, plotLx = 0, plotLy = 0;
+let plotAnimId = null;
+let plotHovered = null;
+
+const METRIC_LABELS = {
+  anisotropy:'α (Aniso)', Ex_GPa:'Ex', Ey_GPa:'Ey', Ez_GPa:'Ez',
+  stiffness_density:'E/ρ', aniso_efficiency:'α/ρ', axial_dominance:'Ξ (Axial)',
+  ortho_contrast:'Ω (Ortho)', load_path_eff:'λ (L.Path)', connect_idx:'κ (Connect)',
+  stiff_axis:'Stiff Axis', keff_x:'kx', keff_y:'ky', keff_z:'kz',
+  thermal_anisotropy:'kα (T.Aniso)', k_density:'k/ρ',
+  U_strain:'U (Strain)', microstrain_x:'με·X', microstrain_y:'με·Y', microstrain_z:'με·Z',
+  microstrain_avg:'με̄ (avg)', pore_size:'φ (µm)', throat_size:'φt (µm)', perc_idx:'perc', surface_complexity:'SA/V', volume_fraction:'ρ%',
+};
+
+function getPlotAxes() {
+  return {
+    x: document.getElementById('r1metric')?.value || 'anisotropy',
+    y: document.getElementById('r2metric')?.value === 'none' ? 'Ex_GPa' : (document.getElementById('r2metric')?.value || 'Ex_GPa'),
+    z: document.getElementById('r3metric')?.value === 'none' ? 'volume_fraction' : (document.getElementById('r3metric')?.value || 'volume_fraction'),
+  };
+}
+
+function resizePlot() {
+  const rect = plotCanvas.parentElement.getBoundingClientRect();
+  plotCanvas.width = rect.width || 280;
+  plotCanvas.height = rect.height || 220;
+}
+
+function project3D(px, py, pz, cx, cy, rx, ry, scale) {
+  // Rotate around Y then X
+  const cosY = Math.cos(ry), sinY = Math.sin(ry);
+  const cosX = Math.cos(rx), sinX = Math.sin(rx);
+  let x1 = px * cosY - pz * sinY;
+  let z1 = px * sinY + pz * cosY;
+  let y1 = py * cosX - z1 * sinX;
+  let z2 = py * sinX + z1 * cosX;
+  // Orthographic — no perspective divide, parallel lines stay parallel
+  return {
+    sx: cx + x1 * scale,
+    sy: cy - y1 * scale,
+    depth: z2
+  };
+}
+
+function drawPlot() {
+  if (!plotCanvas.width) resizePlot();
+  const W = plotCanvas.width, H = plotCanvas.height;
+  const cx = W / 2, cy = H / 2;
+  const scale = Math.min(W, H) * 0.24;
+  pctx.clearRect(0, 0, W, H);
+
+  const axes = getPlotAxes();
+
+  // Helper — project and draw a line segment
+  const line = (x0,y0,z0, x1,y1,z1, color, alpha, width=0.5) => {
+    const a = project3D(x0,y0,z0, cx,cy, plotRot.x, plotRot.y, scale);
+    const b = project3D(x1,y1,z1, cx,cy, plotRot.x, plotRot.y, scale);
+    pctx.strokeStyle = color;
+    pctx.globalAlpha = alpha;
+    pctx.lineWidth = width;
+    pctx.beginPath();
+    pctx.moveTo(a.sx, a.sy);
+    pctx.lineTo(b.sx, b.sy);
+    pctx.stroke();
+    pctx.globalAlpha = 1;
+  };
+
+  // ── Wireframe cube ────────────────────────────────────────────────────────
+  // 12 edges of a unit cube from [-1,-1,-1] to [1,1,1]
+  const cubeColor = '#2a4a5a';
+  const cubeAlpha = 0.5;
+  // bottom face
+  line(-1,-1,-1,  1,-1,-1, cubeColor, cubeAlpha);
+  line( 1,-1,-1,  1,-1, 1, cubeColor, cubeAlpha);
+  line( 1,-1, 1, -1,-1, 1, cubeColor, cubeAlpha);
+  line(-1,-1, 1, -1,-1,-1, cubeColor, cubeAlpha);
+  // top face
+  line(-1, 1,-1,  1, 1,-1, cubeColor, cubeAlpha);
+  line( 1, 1,-1,  1, 1, 1, cubeColor, cubeAlpha);
+  line( 1, 1, 1, -1, 1, 1, cubeColor, cubeAlpha);
+  line(-1, 1, 1, -1, 1,-1, cubeColor, cubeAlpha);
+  // verticals
+  line(-1,-1,-1, -1, 1,-1, cubeColor, cubeAlpha);
+  line( 1,-1,-1,  1, 1,-1, cubeColor, cubeAlpha);
+  line( 1,-1, 1,  1, 1, 1, cubeColor, cubeAlpha);
+  line(-1,-1, 1, -1, 1, 1, cubeColor, cubeAlpha);
+
+  // ── Interior grid lines (3 subdivisions per axis) ─────────────────────────
+  const gridColor = '#1a3040';
+  const gridAlpha = 0.35;
+  const steps = [-0.5, 0, 0.5]; // 3 interior slices per axis
+  steps.forEach(t => {
+    // XZ plane slices (horizontal bands)
+    line(-1, t,-1,  1, t,-1, gridColor, gridAlpha);
+    line( 1, t,-1,  1, t, 1, gridColor, gridAlpha);
+    line( 1, t, 1, -1, t, 1, gridColor, gridAlpha);
+    line(-1, t, 1, -1, t,-1, gridColor, gridAlpha);
+    // XY plane slices (front/back)
+    line(-1,-1, t,  1,-1, t, gridColor, gridAlpha);
+    line( 1,-1, t,  1, 1, t, gridColor, gridAlpha);
+    line( 1, 1, t, -1, 1, t, gridColor, gridAlpha);
+    line(-1, 1, t, -1,-1, t, gridColor, gridAlpha);
+    // YZ plane slices (left/right)
+    line( t,-1,-1,  t, 1,-1, gridColor, gridAlpha);
+    line( t, 1,-1,  t, 1, 1, gridColor, gridAlpha);
+    line( t, 1, 1,  t,-1, 1, gridColor, gridAlpha);
+    line( t,-1, 1,  t,-1,-1, gridColor, gridAlpha);
+  });
+
+  if (plotData.length === 0) return;
+
+  // Normalize data to [-1, 1] — high values always at +1, low at -1
+  const vals = key => plotData.map(d => d[key] || 0);
+  const minmax = key => {
+    const v = vals(key);
+    const mn = Math.min(...v), mx = Math.max(...v);
+    return { mn, mx, range: mx - mn || 1 };
+  };
+  const nx = minmax(axes.x), ny = minmax(axes.y), nz = minmax(axes.z);
+  const norm = (v, mm) => (v - mm.mn) / mm.range * 2 - 1;
+
+  // ── Axis labels on cube edges ─────────────────────────────────────────────
+  const axesDef = [
+    { from: [-1,-1,-1], to: [1,-1,-1], label: (METRIC_LABELS[axes.x] || axes.x).slice(0,11), color: '#22d3ee' },
+    { from: [-1,-1,-1], to: [-1,1,-1], label: (METRIC_LABELS[axes.y] || axes.y).slice(0,11), color: '#e879f9' },
+    { from: [-1,-1,-1], to: [-1,-1,1], label: (METRIC_LABELS[axes.z] || axes.z).slice(0,11), color: '#facc15' },
+  ];
+
+  axesDef.forEach(ax => {
+    line(...ax.from, ...ax.to, ax.color, 0.7, 1.5);
+    const e = project3D(...ax.to, cx, cy, plotRot.x, plotRot.y, scale);
+    const o = project3D(...ax.from, cx, cy, plotRot.x, plotRot.y, scale);
+    const lx = e.sx + (e.sx - o.sx) * 0.18;
+    const ly = e.sy + (e.sy - o.sy) * 0.18;
+    pctx.fillStyle = ax.color;
+    pctx.globalAlpha = 0.9;
+    pctx.font = `500 8.5px "Azeret Mono", monospace`;
+    pctx.textAlign = 'center';
+    pctx.fillText(ax.label, lx, ly);
+    pctx.globalAlpha = 1;
+  });
+
+  // Build points with depth for painter's sort
+  const points = plotData.map(d => {
+    const px = norm(d[axes.x] || 0, nx);
+    const py = norm(d[axes.y] || 0, ny);
+    const pz = norm(d[axes.z] || 0, nz);
+    const proj = project3D(px, py, pz, cx, cy, plotRot.x, plotRot.y, scale);
+    return { d, proj, px, py, pz };
+  });
+
+  // Sort back to front
+  points.sort((a, b) => a.proj.depth - b.proj.depth);
+
+  // ── Ideal corner ─────────────────────────────────────────────────────────
+  const idealX = (directions[1] || 'max') === 'max' ?  1 : -1;
+  const idealY = (directions[2] || 'max') === 'max' ?  1 : -1;
+  const idealZ = (directions[3] || 'max') === 'max' ?  1 : -1;
+  const idealProj = project3D(idealX, idealY, idealZ, cx, cy, plotRot.x, plotRot.y, scale);
+
+  // Whisker lines from ideal to top 3 — drawn behind points
+  const top3 = points.filter(pt => (pt.d.filterRank || 999) <= 3)
+    .sort((a, b) => (a.d.filterRank || 999) - (b.d.filterRank || 999));
+  const whiskerColors = ['#00e5c0', '#0099ff', '#9b6fff'];
+  top3.forEach((pt, i) => {
+    pctx.strokeStyle = whiskerColors[i];
+    pctx.globalAlpha = 0.3;
+    pctx.lineWidth = 1;
+    pctx.setLineDash([3, 4]);
+    pctx.beginPath();
+    pctx.moveTo(idealProj.sx, idealProj.sy);
+    pctx.lineTo(pt.proj.sx, pt.proj.sy);
+    pctx.stroke();
+    pctx.setLineDash([]);
+    pctx.globalAlpha = 1;
+  });
+
+  // Draw points
+  points.forEach(pt => {
+    const isHovered = plotHovered && plotHovered.id === pt.d.id;
+    const isSelected = selectedDesign && selectedDesign.id === pt.d.id;
+    const fr = pt.d.filterRank || 999;
+    const r = isHovered || isSelected ? 6 : fr <= 3 ? 4.5 : 3;
+    const color = getPointColor(pt.d, fr);
+
+    pctx.beginPath();
+    pctx.arc(pt.proj.sx, pt.proj.sy, r, 0, Math.PI * 2);
+    pctx.fillStyle = color + (isHovered || isSelected ? 'ff' : fr <= 3 ? 'cc' : '88');
+    pctx.fill();
+
+    if (isHovered || isSelected || fr <= 3) {
+      pctx.strokeStyle = color;
+      pctx.lineWidth = fr <= 3 ? 1.5 : 1;
+      pctx.globalAlpha = fr <= 3 ? 0.8 : 0.5;
+      pctx.stroke();
+      pctx.globalAlpha = 1;
+    }
+  });
+
+  // Draw ideal corner marker on top of everything
+  pctx.beginPath();
+  pctx.arc(idealProj.sx, idealProj.sy, 5, 0, Math.PI * 2);
+  pctx.fillStyle = 'rgba(255,255,255,0.15)';
+  pctx.fill();
+  pctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  pctx.lineWidth = 1.5;
+  pctx.stroke();
+  pctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  pctx.lineWidth = 1;
+  pctx.beginPath();
+  pctx.moveTo(idealProj.sx - 7, idealProj.sy);
+  pctx.lineTo(idealProj.sx + 7, idealProj.sy);
+  pctx.moveTo(idealProj.sx, idealProj.sy - 7);
+  pctx.lineTo(idealProj.sx, idealProj.sy + 7);
+  pctx.stroke();
+  pctx.fillStyle = 'rgba(255,255,255,0.45)';
+  pctx.font = '300 8px "Azeret Mono", monospace';
+  pctx.textAlign = 'center';
+  pctx.fillText('ideal', idealProj.sx, idealProj.sy + 16);
+
+  // Tooltip for hovered point
+  if (plotHovered) {
+    const pt = points.find(p => p.d.id === plotHovered.id);
+    if (pt) {
+      const tx = Math.min(pt.proj.sx + 10, W - 120);
+      const ty = Math.max(pt.proj.sy - 10, 14);
+      pctx.fillStyle = 'rgba(13,19,24,0.9)';
+      pctx.beginPath();
+      pctx.roundRect(tx, ty - 12, 115, 44, 4);
+      pctx.fill();
+      pctx.fillStyle = '#00e5c0';
+      pctx.font = '500 10px "Azeret Mono", monospace';
+      pctx.textAlign = 'left';
+      pctx.fillText(`#${plotHovered.id}`, tx + 8, ty + 2);
+      pctx.fillStyle = '#7a9ab5';
+      pctx.font = '300 9px "Azeret Mono", monospace';
+      pctx.fillText(`${(plotHovered[axes.x]||0).toFixed(2)} · ${(plotHovered[axes.y]||0).toFixed(2)} · ${(plotHovered[axes.z]||0).toFixed(2)}`, tx + 8, ty + 16);
+      pctx.fillStyle = '#4a6a7a';
+      pctx.fillText(`aniso ${(plotHovered.anisotropy||0).toFixed(2)}×`, tx + 8, ty + 28);
+    }
+  }
+}
+
+function updatePlot(data) {
+  plotData = data;
+  resizePlot();
+  document.getElementById('plotEmpty').classList.add('hidden');
+  document.getElementById('plotBadge').textContent = `${data.length} designs`;
+  // Run clustering whenever data updates so Terms mode is ready
+  if (data.length >= 6) runKMeans(data, 6);
+  drawPlot();
+}
+
+// Drag to rotate
+plotCanvas.addEventListener('mousedown', e => {
+  plotDrag = true;
+  plotLx = e.clientX;
+  plotLy = e.clientY;
+});
+window.addEventListener('mouseup', () => { plotDrag = false; });
+window.addEventListener('mousemove', e => {
+  if (plotDrag) {
+    plotRot.y += (e.clientX - plotLx) * 0.008;
+    plotRot.x += (e.clientY - plotLy) * 0.008;
+    plotLx = e.clientX;
+    plotLy = e.clientY;
+    drawPlot();
+    return;
+  }
+  // Hover detection
+  if (plotData.length === 0) return;
+  const rect = plotCanvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const W = plotCanvas.width, H = plotCanvas.height;
+  const cx = W / 2, cy = H / 2;
+  const scale = Math.min(W, H) * 0.24;
+  const axes = getPlotAxes();
+  const vals = key => plotData.map(d => d[key] || 0);
+  const minmax = key => { const v = vals(key); const mn = Math.min(...v), mx2 = Math.max(...v); return { mn, mx: mx2, range: mx2 - mn || 1 }; };
+  const normH = (v, mm) => (v - mm.mn) / mm.range * 2 - 1;
+  const nx = minmax(axes.x), ny = minmax(axes.y), nz = minmax(axes.z);
+
+  let closest = null, closestDist = 20;
+  plotData.forEach(d => {
+    const proj = project3D(
+      normH(d[axes.x]||0, nx),
+      normH(d[axes.y]||0, ny),
+      normH(d[axes.z]||0, nz),
+      cx, cy, plotRot.x, plotRot.y, scale);
+    const dist = Math.hypot(proj.sx - mx, proj.sy - my);
+    if (dist < closestDist) { closestDist = dist; closest = d; }
+  });
+
+  if (closest !== plotHovered) {
+    plotHovered = closest;
+    drawPlot();
+    if (closest) {
+      showPreview(closest);
+      // highlight table row
+      document.querySelectorAll('tr.hovered-row').forEach(r => r.classList.remove('hovered-row'));
+      const row = document.querySelector(`tr[data-design-id="${closest.id}"]`);
+      if (row) { row.classList.add('hovered-row'); row.scrollIntoView({ block: 'nearest' }); }
+      document.getElementById('plotInfo').textContent = `#${closest.id} · aniso ${closest.anisotropy.toFixed(2)}×`;
+      document.getElementById('plotInfo').classList.add('visible');
+    } else {
+      document.getElementById('plotInfo').classList.remove('visible');
+    }
+  }
+});
+
+// Click to select
+plotCanvas.addEventListener('click', () => {
+  if (plotHovered) {
+    selectedDesign = plotHovered;
+    document.querySelectorAll('tr.selected-row').forEach(r => r.classList.remove('selected-row'));
+    const row = document.querySelector(`tr[data-design-id="${plotHovered.id}"]`);
+    if (row) { row.classList.add('selected-row'); row.scrollIntoView({ block: 'nearest' }); }
+    const btn = document.getElementById('exportDesignBtn');
+    btn.disabled = false;
+    btn.style.color = 'var(--accent)';
+    btn.style.borderColor = 'rgba(0,229,192,0.4)';
+    btn.style.cursor = 'pointer';
+    document.getElementById('selectedLabel').textContent = `design #${plotHovered.id} selected`;
+    document.getElementById('selectedLabel').style.color = 'var(--accent)';
+    drawPlot();
+  }
+});
+
+window.addEventListener('resize', () => { resizePlot(); drawPlot(); });
+
+// Init — populate metric key for default (general) domain
+renderMetricKey();
+
+// Init — populate filter dropdowns for default domain
+rebuildFilterDropdowns('general');
+
+// Init — start worker pool (solver.js must be loaded first via <script src>)
+initWorkerPool();
+
+function log(type, msg) {
+  const body = document.getElementById('logBody');
+  const now = new Date().toTimeString().slice(0, 8);
+  const line = document.createElement('div');
+  line.className = `log-line ${type}`;
+  line.innerHTML = `<span class="log-time">${now}</span><span class="log-msg">${msg}</span>`;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+  if (body.children.length > 1 && body.children[0].querySelector('.log-time')?.textContent === '—') {
+    body.children[0].remove();
+  }
+}
+</script>
+</body>
+</html>
