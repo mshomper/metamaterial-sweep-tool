@@ -1853,268 +1853,70 @@ function updateScalePreview() {
 
 
 
-  invalidateSolverCaches(); // rebuild Gamma tensors fresh for this run's Es/nu/ks
 
-  const nSamples = parseInt(samplesSlider.value);
-  const nom = baseRecipe.geometry.cell_scale || 1.0;
-  const mat = getSolverMaterial();
-  const Es = mat.Es;
-  const nu = mat.nu;
-  const ks = mat.ks;
-  const sigma_ref = getSigmaRef() ?? Es * 0.0001;
-  const voxelToUm = getVoxelToUm();
-
-  const get = id => parseFloat(document.getElementById(id).value) || 0;
-  const xLo = nom * get('scaleXlo') / 100;
-  const xHi = nom * get('scaleXhi') / 100;
-  const yLo = nom * get('scaleYlo') / 100;
-  const yHi = nom * get('scaleYhi') / 100;
-  const zLo = nom * get('scaleZlo') / 100;
-  const zHi = nom * get('scaleZhi') / 100;
-
-  const termToggles = []; // retained for compatibility, no longer used in sampling
-
-  log('accent', `Starting sweep: ${nSamples} samples`);
-  log('info', `Periodicity X: ${xLo.toFixed(2)}→${xHi.toFixed(2)} · Y: ${yLo.toFixed(2)}→${yHi.toFixed(2)} · Z: ${zLo.toFixed(2)}→${zHi.toFixed(2)}`);
-
-  const progressWrap = document.getElementById('progressWrap');
-  const progressFill = document.getElementById('progressFill');
-  const progressLabel = document.getElementById('progressLabel');
-  const progressPct = document.getElementById('progressPct');
-  progressWrap.classList.add('visible');
-  document.getElementById('logBadge').textContent = 'running';
-
-  const sweepMode = baseRecipe.geometry?.mode || 'solid';
-  const sweepWall = baseRecipe.geometry?.wall_thickness || 0.3;
-
-  const BATCH = 10;
-  let attempts = 0;
-  const MAX_ATTEMPTS = nSamples * 20; // safety cap — never spin forever
-  let validCount = 0;
-  let discarded = 0;
-
-  while (validCount < nSamples && attempts < MAX_ATTEMPTS) {
-    if (window._sweepCancelled) {
-      log('warn', `Sweep cancelled at ${validCount} samples — showing results so far`);
-      break;
-    }
-    // sample a batch then yield to UI
-    for (let b = 0; b < BATCH && validCount < nSamples && attempts < MAX_ATTEMPTS; b++) {
-      attempts++;
-
-      const scaleX = xLo + Math.random() * (xHi - xLo);
-      const scaleY = yLo + Math.random() * (yHi - yLo);
-      const scaleZ = zLo + Math.random() * (zHi - zLo);
-
-      // PI-TPMS mode: preserve surface formula, only vary pipeR and shift
-      // Solid/Shell mode: mutate surface terms for exploration
-      let terms;
-      let finalScaleX = scaleX, finalScaleY = scaleY, finalScaleZ = scaleZ;
-      
-      if (sweepMode === 'pi-tpms') {
-        // Keep original surface UNCHANGED — pure (r, shift) exploration
-        terms = baseRecipe.surface.terms.map(t => ({
-          ...t,
-          on: true,
-          coef: t.coef,  // Preserve original coefficient
-          factors: t.factors.map(f => ({
-            trig: f.trig,  // Preserve trig function
-            fx: f.fx,      // Preserve frequencies
-            fy: f.fy,
-            fz: f.fz
-          }))
-        }));
-        
-        // Force isotropic scaling to preserve cubic periodicity
-        // PI-TPMS assumes triply periodic in cubic domain
-        finalScaleX = finalScaleY = finalScaleZ = nom;
-      } else {
-        // Solid/Shell: mutate terms for surface exploration
-        const TRIG_SWAP_PROB = 0.20;
-        const FREQ_JITTER    = 0.20;
-        
-        terms = baseRecipe.surface.terms.map(t => ({
-          ...t,
-          on: true,
-          coef: +(0.05 + Math.random() * 4.95).toFixed(3),
-          factors: t.factors.map(f => {
-            let trig = f.trig;
-            if (Math.random() < TRIG_SWAP_PROB) {
-              trig = trig.startsWith('sin') ? trig.replace('sin', 'cos') : trig.replace('cos', 'sin');
-            }
-            const jitter = v => Math.max(0.5, Math.min(8, v * (1 + (Math.random() * 2 - 1) * FREQ_JITTER)));
-            return { trig, fx: +jitter(f.fx).toFixed(2), fy: +jitter(f.fy).toFixed(2), fz: +jitter(f.fz).toFixed(2) };
-          })
-        }));
-      }
-      const nOn = terms.length;
-
-      // PI-TPMS: vary pipe radius and phase shift (discrete eighths for periodicity)
-      // Solid/shell: vary offset and normal weights as before
-      let offset = 0, sweepWallJittered = sweepWall, nWeights = null;
-      let sweepPipeR = null, sweepPhaseShift = null;
-
-      if (sweepMode === 'pi-tpms') {
-        // Pipe radius: jitter ±40% around base value, clamped to sensible range
-        const basePipeR = baseRecipe.geometry?.pipe_radius || 0.1;
-        sweepPipeR = +Math.max(0.02, Math.min(0.35,
-          basePipeR * (0.6 + Math.random() * 0.8))).toFixed(3);
-        
-        // Phase shift: random discrete eighths, skip degenerates (optimized)
-        // NOTE: 1.0 excluded — a full-period shift is identical to 0 for all TPMS surfaces
-        // (all terms are sin/cos with integer frequencies, so period 2π maps to same field)
-        const EIGHTHS = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875];
-        
-        // Precompute degenerate shifts as integer indices (fast lookup)
-        const surfName = detectPISurfaceType(baseRecipe);
-        const degenerateIndices = new Set();
-        degenerateIndices.add(0); // (0,0,0) always degenerate
-        if (surfName && PI_SHIFT_LIBRARY[surfName]) {
-          const degenerates = PI_SHIFT_LIBRARY[surfName].degenerate || [];
-          for (const d of degenerates) {
-            const ix = EIGHTHS.indexOf(d[0]);
-            const iy = EIGHTHS.indexOf(d[1]);
-            const iz = EIGHTHS.indexOf(d[2]);
-            if (ix >= 0 && iy >= 0 && iz >= 0) {
-              degenerateIndices.add(ix * 81 + iy * 9 + iz); // Hash to single int
-            }
-          }
-        }
-        
-        // Sample shift (fast integer check)
-        let ix, iy, iz;
-        do {
-          ix = Math.floor(Math.random() * 9);
-          iy = Math.floor(Math.random() * 9);
-          iz = Math.floor(Math.random() * 9);
-        } while (degenerateIndices.has(ix * 81 + iy * 9 + iz));
-        
-        sweepPhaseShift = { x: EIGHTHS[ix], y: EIGHTHS[iy], z: EIGHTHS[iz] };
-      } else if (sweepMode === 'shell') {
-        offset = baseRecipe.geometry.offset;
-        const rx = 0.20 + Math.random() * 2.8;
-        const ry = 0.20 + Math.random() * 2.8;
-        const rz = 0.20 + Math.random() * 2.8;
-        const mean = (rx + ry + rz) / 3;
-        nWeights = { wx: rx/mean, wy: ry/mean, wz: rz/mean };
-      } else {
-        offset = baseRecipe.geometry.offset + (Math.random() - 0.5) * 0.4;
-      }
-
-      const baseline = { ...baseRecipe.homogenization, cell_scale: nom };
-      const hom = estimateHomogenization(terms, offset, finalScaleX, finalScaleY, finalScaleZ, Es, nu, baseline, sweepMode, sweepWallJittered, nWeights, sweepPipeR, sweepPhaseShift, ks, sigma_ref, voxelToUm, nom);
-
-      if (hom.degenerate) { discarded++; continue; }
-
-      validCount++;
-      results.push({
-        id: validCount,
-        scaleX: +finalScaleX.toFixed(3),
-        scaleY: +finalScaleY.toFixed(3),
-        scaleZ: +finalScaleZ.toFixed(3),
-        offset: +offset.toFixed(3),
-        nTerms: nOn,
-        nWeights: nWeights ? { wx: +nWeights.wx.toFixed(4), wy: +nWeights.wy.toFixed(4), wz: +nWeights.wz.toFixed(4) } : null,
-        pipe_radius: sweepPipeR,
-        phase_shift: sweepPhaseShift,
-        ...hom,
-        terms: terms.map(t => t.factors.map(f => f.trig[0]).join('')).join('|'),
-        termObjects: terms.map(t => ({...t, factors: t.factors.map(f => ({...f}))}))
-      });
-    }
-
-    // Progress: show whichever is further along — valid designs or attempt budget
-    const pctValid    = validCount / nSamples * 100;
-    const pctAttempts = attempts / MAX_ATTEMPTS * 100;
-    const pct = Math.min(99, Math.round(Math.max(pctValid, pctAttempts)));
-    progressFill.style.width = pct + '%';
-    progressPct.textContent = pct + '%';
-    const discardRate = attempts > 0 ? Math.round(discarded / attempts * 100) : 0;
-    progressLabel.textContent = `Valid: ${validCount} / ${nSamples} · discarded: ${discarded} (${discardRate}%)`;
-    await new Promise(r => setTimeout(r, 0));
-  }
-
-  // final progress
-  progressFill.style.width = '100%';
-  progressPct.textContent = '100%';
-
-  log('success', `${results.length} valid designs collected · ${discarded} degenerate discarded (${attempts} attempts)`);
-  const totalSampled = results.length;
-
-  if (totalSampled === 0) {
-    progressWrap.classList.remove('visible');
-    document.getElementById('logBadge').textContent = 'done';
-    btn.disabled = false;
-    btn.textContent = '▶ Run Sweep';
-    cancelBtn.style.display = 'none';
-    window._sweepCancelled = false;
+// ─── Export Results ───────────────────────────────────────────────────────────
+function exportResults() {
+  if (currentFiltered.length === 0) {
+    log('warn', 'Run a sweep first, then export results.');
     return;
   }
 
-  document.getElementById('statSampled').textContent = totalSampled;
+  const payload = {
+    meta: {
+      exported: new Date().toISOString(),
+      preset:   baseRecipe.meta?.preset || 'unknown',
+      version:  baseRecipe.meta?.version || '?',
+      count:    currentFiltered.length
+    },
+    base: {
+      E_solid_GPa:    baseRecipe.homogenization?.E_solid_GPa || 100,
+      poisson:        baseRecipe.homogenization?.poisson || 0.3,
+      mode:           baseRecipe.geometry?.mode || 'shell',
+      wall_thickness: baseRecipe.geometry?.wall_thickness || 0.3,
+      offset:         baseRecipe.geometry?.offset || 0.0,
+      cell_scale:     baseRecipe.geometry?.cell_scale || 1.0
+    },
+    designs: currentFiltered.map(d => ({
+      id:             d.id,
+      filterRank:     d.filterRank,
+      browser: {
+        Ex_GPa:            d.Ex_GPa,
+        Ey_GPa:            d.Ey_GPa,
+        Ez_GPa:            d.Ez_GPa,
+        anisotropy:        d.anisotropy,
+        volume_fraction:   d.volume_fraction,
+        stiffness_density: d.stiffness_density,
+        aniso_efficiency:  d.aniso_efficiency,
+        axial_dominance:   d.axial_dominance,
+        ortho_contrast:    d.ortho_contrast
+      },
+      design: {
+        meta: baseRecipe.meta,
+        surface: { type: 'terms', terms: d.termObjects },
+        geometry: {
+          ...baseRecipe.geometry,
+          offset:         d.offset,
+          normal_weights: d.nWeights || null
+        },
+        homogenization: baseRecipe.homogenization
+      }
+    }))
+  };
 
-  const pctOf = (n) => `${Math.round(n / totalSampled * 100)}% of total`;
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const ts   = new Date().toISOString().slice(0,16).replace('T','_').replace(':','');
+  a.href     = url;
+  a.download = `sweep_results_${ts}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 
-  // Apply filters — capture count after each rank
-  let filtered = [...results];
-
-  filtered = applyRankFilter(filtered, 'r1metric', 1, null, 'sort');
-  log('info', `After Rank 1: ${filtered.length} designs`);
-  document.getElementById('statRank1').textContent = filtered.length;
-  document.getElementById('statRank1Pct').textContent = pctOf(filtered.length);
-
-  filtered = applyRankFilter(filtered, 'r2metric', 2, 'r2keep', 'keep');
-  log('info', `After Rank 2: ${filtered.length} designs`);
-  document.getElementById('statRank2').textContent = filtered.length;
-  document.getElementById('statRank2Pct').textContent = pctOf(filtered.length);
-
-  filtered = applyRankFilter(filtered, 'r3metric', 3, 'r3keep', 'keep');
-  log('success', `After Rank 3: ${filtered.length} designs passed all filters`);
-  document.getElementById('statRank3').textContent = filtered.length;
-  document.getElementById('statRank3Pct').textContent = pctOf(filtered.length);
-
-  // Peak values for rank filter cards
-  function setPeakCard(valId, labelId, subId, metricKey, dir, data) {
-    const label = METRIC_LABELS[metricKey] || metricKey;
-    const disabled = !metricKey || metricKey === 'none';
-    document.getElementById(labelId).textContent = disabled ? '—' : `Peak ${label}`;
-    if (disabled || data.length === 0) {
-      document.getElementById(valId).textContent = '—';
-      document.getElementById(subId).textContent = 'no filter chosen';
-      return;
-    }
-    const vals = data.map(d => typeof d[metricKey] === 'number' ? d[metricKey] : null).filter(v => v !== null);
-    if (vals.length === 0) { document.getElementById(valId).textContent = '—'; return; }
-    const peak = dir === 'min' ? Math.min(...vals) : Math.max(...vals);
-    const fmt = peak >= 1000 ? Math.round(peak).toString()
-               : peak >= 10  ? peak.toFixed(1)
-               : peak.toFixed(2);
-    const suffix = metricKey === 'volume_fraction' ? '%' : metricKey === 'anisotropy' ? '×' : '';
-    document.getElementById(valId).textContent = fmt + suffix;
-    document.getElementById(subId).textContent = dir === 'min' ? '▼ min' : '▲ max';
-  }
-
-  const r1key = document.getElementById('r1metric')?.value;
-  const r2key = document.getElementById('r2metric')?.value;
-  const r3key = document.getElementById('r3metric')?.value;
-  setPeakCard('statPeakR1','statPeakR1Label','statPeakR1Sub', r1key, directions[1]||'max', filtered);
-  setPeakCard('statPeakR2','statPeakR2Label','statPeakR2Sub', r2key, directions[2]||'max', filtered);
-  setPeakCard('statPeakR3','statPeakR3Label','statPeakR3Sub', r3key, directions[3]||'max', filtered);
-
-  // Store reference for rank mode switching, then apply final ranking
-  currentFiltered = filtered;
-  applyFinalRanking(filtered);
-
-  progressWrap.classList.remove('visible');
-  document.getElementById('logBadge').textContent = 'done';
-  btn.disabled = false;
-  btn.textContent = '▶ Run Sweep';
-  cancelBtn.style.display = 'none';
-  window._sweepCancelled = false;
+  log('success', `Exported ${currentFiltered.length} designs → ${a.download}`);
+  log('info', 'Run batch_validate.py on this file to get GPU-validated stiffness values');
 }
 
-// ─── Export Results ───────────────────────────────────────────────────────────
-// ─── Web Worker pool ─────────────────────────────────────────────────────────
+
 // One worker per logical CPU core minus one (keeps the UI thread responsive).
 // Workers load solver.js directly — no code serialization needed.
 var _workerCount = Math.max(1, (navigator.hardwareConcurrency || 4) - 1);
@@ -2491,68 +2293,6 @@ function runSweep() {
   }
 }
 
-
-  if (currentFiltered.length === 0) {
-    log('warn', 'Run a sweep first, then export results.');
-    return;
-  }
-
-  const payload = {
-    meta: {
-      exported: new Date().toISOString(),
-      preset:   baseRecipe.meta?.preset || 'unknown',
-      version:  baseRecipe.meta?.version || '?',
-      count:    currentFiltered.length
-    },
-    base: {
-      E_solid_GPa:    baseRecipe.homogenization?.E_solid_GPa || 100,
-      poisson:        baseRecipe.homogenization?.poisson || 0.3,
-      mode:           baseRecipe.geometry?.mode || 'shell',
-      wall_thickness: baseRecipe.geometry?.wall_thickness || 0.3,
-      offset:         baseRecipe.geometry?.offset || 0.0,
-      cell_scale:     baseRecipe.geometry?.cell_scale || 1.0
-    },
-    designs: currentFiltered.map(d => ({
-      id:             d.id,
-      filterRank:     d.filterRank,
-      // Browser FFT-CG estimates (N=16³)
-      browser: {
-        Ex_GPa:            d.Ex_GPa,
-        Ey_GPa:            d.Ey_GPa,
-        Ez_GPa:            d.Ez_GPa,
-        anisotropy:        d.anisotropy,
-        volume_fraction:   d.volume_fraction,
-        stiffness_density: d.stiffness_density,
-        aniso_efficiency:  d.aniso_efficiency,
-        axial_dominance:   d.axial_dominance,
-        ortho_contrast:    d.ortho_contrast
-      },
-      // Full design definition for batch_validate.py
-      design: {
-        meta: baseRecipe.meta,
-        surface: { type: 'terms', terms: d.termObjects },
-        geometry: {
-          ...baseRecipe.geometry,
-          offset:          d.offset,
-          normal_weights:  d.nWeights || null
-        },
-        homogenization: baseRecipe.homogenization
-      }
-    }))
-  };
-
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  const ts   = new Date().toISOString().slice(0,16).replace('T','_').replace(':','');
-  a.href     = url;
-  a.download = `sweep_results_${ts}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-
-  log('success', `Exported ${currentFiltered.length} designs → ${a.download}`);
-  log('info', 'Run batch_validate.py on this file to get GPU-validated stiffness values');
-}
 
 function applyRankFilter(data, metricId, rank, valId, mode) {
   const metric = document.getElementById(metricId)?.value;
