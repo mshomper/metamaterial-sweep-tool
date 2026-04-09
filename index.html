@@ -1933,12 +1933,21 @@ function exportResults() {
     return;
   }
 
+  // Capture domain and material at export time
+  const exportDomain   = document.getElementById('domainSel')?.value || 'general';
+  const exportMatKey   = document.getElementById('materialSel')?.value || null;
+  const exportMat      = exportMatKey ? MATERIALS[exportMatKey] : null;
+
   const payload = {
     meta: {
-      exported: new Date().toISOString(),
-      preset:   baseRecipe.meta?.preset || 'unknown',
-      version:  baseRecipe.meta?.version || '?',
-      count:    currentFiltered.length
+      exported:  new Date().toISOString(),
+      preset:    baseRecipe.meta?.preset || 'unknown',
+      version:   baseRecipe.meta?.version || '?',
+      count:     currentFiltered.length,
+      domain:    exportDomain,
+      material:  exportMat ? exportMat.label : 'agnostic',
+      E_solid_GPa: exportMat ? exportMat.E  : (baseRecipe.homogenization?.E_solid_GPa || 100),
+      poisson:     exportMat ? exportMat.nu : (baseRecipe.homogenization?.poisson || 0.3),
     },
     base: {
       E_solid_GPa:    baseRecipe.homogenization?.E_solid_GPa || 100,
@@ -1949,26 +1958,49 @@ function exportResults() {
       cell_scale:     baseRecipe.geometry?.cell_scale || 1.0
     },
     designs: currentFiltered.map(d => ({
-      id:             d.id,
-      filterRank:     d.filterRank,
-      browser: {
-        Ex_GPa:            d.Ex_GPa,
-        Ey_GPa:            d.Ey_GPa,
-        Ez_GPa:            d.Ez_GPa,
-        anisotropy:        d.anisotropy,
-        volume_fraction:   d.volume_fraction,
-        stiffness_density: d.stiffness_density,
-        aniso_efficiency:  d.aniso_efficiency,
-        axial_dominance:   d.axial_dominance,
-        ortho_contrast:    d.ortho_contrast
+      id:         d.id,
+      filterRank: d.filterRank,
+
+      // Full computed metrics — all fields available for ScaffoldVault recommendation engine
+      metrics: {
+        Ex_GPa:             d.Ex_GPa,
+        Ey_GPa:             d.Ey_GPa,
+        Ez_GPa:             d.Ez_GPa,
+        anisotropy:         d.anisotropy,
+        volume_fraction:    d.volume_fraction,
+        stiffness_density:  d.stiffness_density,
+        aniso_efficiency:   d.aniso_efficiency,
+        axial_dominance:    d.axial_dominance,
+        ortho_contrast:     d.ortho_contrast,
+        load_path_eff:      d.load_path_eff,
+        stiff_axis:         d.stiff_axis,
+        connect_idx:        d.connect_idx,
+        keff_x:             d.keff_x,
+        keff_y:             d.keff_y,
+        keff_z:             d.keff_z,
+        thermal_anisotropy: d.thermal_anisotropy,
+        k_density:          d.k_density,
+        U_strain:           d.U_strain,
+        microstrain_x:      d.microstrain_x,
+        microstrain_y:      d.microstrain_y,
+        microstrain_z:      d.microstrain_z,
+        microstrain_avg:    d.microstrain_avg,
+        pore_size:          d.pore_size,
+        throat_size:        d.throat_size,
+        perc_idx:           d.perc_idx,
+        surface_complexity: d.surface_complexity,
       },
+
       design: {
         meta: baseRecipe.meta,
         surface: { type: 'terms', terms: d.termObjects },
         geometry: {
           ...baseRecipe.geometry,
           offset:         d.offset,
-          normal_weights: d.nWeights || null
+          // Fix: store per-design PI-TPMS parameters, not base recipe defaults
+          pipe_radius:    d.pipe_radius  ?? baseRecipe.geometry?.pipe_radius ?? null,
+          phase_shift:    d.phase_shift  ?? baseRecipe.geometry?.phase_shift ?? null,
+          normal_weights: d.nWeights     || null,
         },
         homogenization: baseRecipe.homogenization
       }
