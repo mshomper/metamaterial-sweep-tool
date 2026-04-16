@@ -1,47 +1,28 @@
-# Metamaterial Sweep Tool
+# f13ld.sweep
 
-A browser-based design space explorer for Triply Periodic Minimal Surface (TPMS) metamaterials. Sweep hundreds of geometric configurations in parallel, rank them by mechanical or thermal performance, and export the best candidates for validation.
+A browser-based design space explorer for implicit metamaterials. Sweep hundreds of geometric configurations in parallel, rank them by mechanical or thermal performance, and export the best candidates for validation.
 
-**[Open the Sweep Tool](https://mshomper.github.io/metamaterial-sweep-tool)**
+**[Open the Sweep Tool](https://mshomper.github.io/f13ld.sweep)**
 
-Companion to the [TPMS Builder](https://mshomper.github.io/tpms-builder).
+Companion to the [field.tpms](https://mshomper.github.io/f13ld.tpms) tool
 
 ---
 
 ## What It Does
 
-The sweep tool takes a TPMS recipe (exported from the Builder) and explores the surrounding design space — varying wall thickness, cell scale, phase shifts, and pipe radius depending on the surface mode. Each candidate design is evaluated using a browser-based FFT-CG homogenization solver that computes effective elastic stiffness, anisotropy, connectivity, pore geometry, and optional thermal conductivity. Results are ranked, visualized in a 3D design space explorer, and exportable as JSON for downstream GPU validation.
+f13ld.sweep takes an implicit recipe (exported from other [f13ld](field.app) tools and explores the surrounding design space — varying multiple parameters depending on the type and surface modes. Each candidate design is evaluated using a browser-based FFT-CG homogenization solver that computes effective elastic stiffness, anisotropy, connectivity, pore geometry, and optional thermal conductivity. Results are ranked, visualized in a 3D design space explorer, and exportable as JSON for downstream GPU validation.
 
 ---
 
 ## Workflow
 
-1. Design a surface in the [TPMS Builder](https://mshomper.github.io/tpms-builder) and export a recipe JSON
+1. Design a surface in any [f13ld](field.app) tool and export a recipe JSON
 2. Drop the JSON into the sweep tool
 3. Select your application domain and material
 4. Set your filtration ranks and target metrics
 5. Run the sweep — results populate in real time
 6. Hover rows to preview surface geometry; click to select
-7. Export results JSON for batch validation via `batch_validate.py`
-
----
-
-## Surface Modes
-
-**Shell (sheet TPMS)**
-Varies normal-weighted wall thickness directionally to break cubic symmetry and introduce mechanical anisotropy. Volume fraction scales linearly with wall thickness.
-
-**Solid (skeletal network)**
-Varies the level-set offset to control the solid fraction of the skeletal network.
-
-**PI-TPMS (Phase-Intersected TPMS)**
-A novel surface class derived from the intersection curve of two phase-shifted TPMS nodal surfaces, defined by the implicit equation:
-
-```
-Ω = { x : max(|φ_A(x)|, |φ_B(x + δ)|) ≤ r }
-```
-
-where `δ` is a phase shift vector and `r` is the pipe radius. Volume fraction scales as `r²` — a qualitatively different regime from all conventional TPMS topologies — enabling ultra-low density structures (< 2% VF) with pipe radii well within printable range. Phase shift and surface type combination independently control the resulting network topology.
+7. Export results JSON for ingestion into the [field.vault](https://mshomper.github.io/f13ld.vault)
 
 ---
 
@@ -140,14 +121,7 @@ The sweep automatically skips known degenerate phase shifts — configurations w
 
 ## Export Format
 
-The exported JSON contains the full sweep metadata, base recipe parameters, and per-design records including browser FFT-CG estimates and complete term definitions for downstream GPU validation via `batch_validate.py` in the [TPMS Pipeline](https://github.com/mshomper/tpms-builder).
-
----
-
-## Related Tools
-
-- **[TPMS Builder](https://mshomper.github.io/tpms-builder)** — Design and visualize individual TPMS surfaces, export recipe JSON
-- **batch_validate.py** — Docker-based GPU FFT homogenization for high-accuracy validation of sweep candidates
+The exported JSON contains the full sweep metadata, base recipe parameters, and per-design records including browser FFT-CG estimates and complete term definitions for downstream ingestion into [field.vault](https://mshomper.github.io/f13ld.vault)
 
 ---
 
